@@ -122,7 +122,7 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
 
     Pure: validates input, reads the state file, and returns a `Plan`.
     Does not write anything. Caller (the unified runner) is responsible
-    for backups, kill-brave, write_atomic, state-file write, and verify.
+    for backups, kill-browser, write_atomic, state-file write, and verify.
     """
     config = _validate_table(raw_table)
     config = {name: _normalize_keys(keys) for name, keys in config.items()}
@@ -215,6 +215,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     d = sub.add_parser("dump", help="emit current shortcuts as TOML")
     d.add_argument("-o", "--output", help="write to file instead of stdout")
     d.add_argument(
+        "-a",
         "--all",
         action="store_true",
         help="dump every binding, not just user-customized ones",

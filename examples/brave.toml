@@ -1,5 +1,5 @@
 # Unified config for `dotbrowser brave apply`. One file, one apply
-# cycle (kill-brave → backup → write).
+# cycle (kill-browser → backup → write).
 #
 # Table semantics:
 #   - missing header  → module skipped, managed entries left alone.

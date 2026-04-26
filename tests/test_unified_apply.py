@@ -77,7 +77,7 @@ def _apply(profile_root: Path, config: Path) -> None:
         profile="Default",
         config=config,
         dry_run=False,
-        kill_brave=False,
+        kill_browser=False,
     )
     brave_pkg.cmd_apply(args)
 

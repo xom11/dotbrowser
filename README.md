@@ -50,7 +50,7 @@ python -m dotbrowser brave shortcuts list
 
 ### One file, one command
 
-A single `brave.toml` carries both `[shortcuts]` and `[settings]`. One `apply` call writes both in one kill-brave + backup + write cycle:
+A single `brave.toml` carries both `[shortcuts]` and `[settings]`. One `apply` call writes both in one kill-browser + backup + write cycle:
 
 ```toml
 # brave.toml
@@ -75,9 +75,9 @@ select_next_tab     = ["Alt+KeyK"]
 # Preview
 dotbrowser brave apply brave.toml --dry-run
 
-# Apply (Brave must be closed, or pass --kill-brave)
+# Apply (Brave must be closed, or pass --kill-browser)
 dotbrowser brave apply brave.toml
-dotbrowser brave apply brave.toml --kill-brave   # SIGKILL Brave, apply, restart
+dotbrowser brave apply brave.toml --kill-browser   # SIGKILL Brave, apply, restart
 ```
 
 Either table can be omitted — that module is then skipped (state file untouched). An empty header (`[settings]` with no entries) is the explicit "wipe my managed entries" gesture.
@@ -110,7 +110,7 @@ dotbrowser brave --profile "Profile 1" apply brave.toml
 Brave keeps user prefs in its profile `Preferences` JSON. `dotbrowser`:
 
 1. Parses the TOML once, hands each table to its module's `plan_apply`. Each module validates and computes its own diff without touching disk.
-2. Refuses if Brave is running (Brave overwrites `Preferences` on exit). `--kill-brave` is the escape hatch: capture argv, SIGKILL, apply, relaunch via the OS-correct path (`brave-browser` wrapper on Linux, `open -a "Brave Browser"` on macOS).
+2. Refuses if Brave is running (Brave overwrites `Preferences` on exit). `--kill-browser` is the escape hatch: capture argv, SIGKILL, apply, relaunch via the OS-correct path (`brave-browser` wrapper on Linux, `open -a "Brave Browser"` on macOS).
 3. Backs up `Preferences` once with a timestamp.
 4. Applies all module mutations to one in-memory dict, then writes atomically (temp file + rename) — so a failure in one module aborts the whole apply, no partial writes.
 5. Tracks managed entries per module in a sidecar file (`Preferences.dotbrowser.shortcuts.json`, `Preferences.dotbrowser.settings.json`). Removing a key from your config resets that shortcut to its default (or pops the setting back to Brave's compiled-in default) on next `apply`.

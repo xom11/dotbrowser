@@ -54,14 +54,14 @@ def _accelerators(profile_root: Path) -> dict[str, list[str]]:
     return prefs.get("brave", {}).get("accelerators", {})
 
 
-def _apply(profile_root: Path, config: Path, *, kill_brave: bool = False) -> None:
+def _apply(profile_root: Path, config: Path, *, kill_browser: bool = False) -> None:
     """Drive the unified cmd_apply in-process with a fake Namespace."""
     args = argparse.Namespace(
         profile_root=profile_root,
         profile="Default",
         config=config,
         dry_run=False,
-        kill_brave=kill_brave,
+        kill_browser=kill_browser,
     )
     brave_pkg.cmd_apply(args)
 

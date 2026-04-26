@@ -44,7 +44,7 @@ Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]
 - `test_settings_apply.py` — same idea but `[settings]`-only; covers apply/refuse-MAC/drop-key, including the `protection.macs` parent-of-tracked-leaf refusal.
 - `test_unified_apply.py` — cross-module orchestration: combined diff, single backup per apply, settings-refusal blocking shortcuts write, and missing-vs-empty table semantics.
 
-The `--kill-brave` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
+The `--kill-browser` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
 ## Architecture
 
@@ -55,7 +55,7 @@ The `--kill-brave` path is intentionally NOT covered by pytest (it would interru
 ```
 cli.py           → mounts brave/__init__.py::register
 brave/__init__   → adds `apply` action; mounts brave/shortcuts.py + brave/settings.py
-                   for read-only inspection. Holds the I/O cycle (kill-brave,
+                   for read-only inspection. Holds the I/O cycle (kill-browser,
                    backup, write_atomic, write state files, verify, restart).
 brave/shortcuts  → exposes `plan_apply(prefs_path, prefs, raw_table) -> Plan`
                    plus dump/list CLI actions.
@@ -65,7 +65,7 @@ brave/utils      → shared helpers (process detection, kill/restart, write_atom
                    get_nested) and the `Plan` dataclass.
 ```
 
-**The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure — validates the TOML table, reads its sidecar state file, computes the diff, and returns a `Plan` with: `namespace`, `diff_lines`, `state_path`, `state_payload`, `apply_fn(prefs)`, `verify_fn(reloaded)`. The orchestrator collects plans, prints the combined diff, and runs all `apply_fn`s against one in-memory `Preferences` dict before a single `write_atomic`. State sidecars are written after `Preferences`, then `verify_fn`s run against the reloaded prefs. This guarantees: one backup per apply, no partial writes if any module rejects, and a single kill-brave + restart cycle.
+**The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure — validates the TOML table, reads its sidecar state file, computes the diff, and returns a `Plan` with: `namespace`, `diff_lines`, `state_path`, `state_payload`, `apply_fn(prefs)`, `verify_fn(reloaded)`. The orchestrator collects plans, prints the combined diff, and runs all `apply_fn`s against one in-memory `Preferences` dict before a single `write_atomic`. State sidecars are written after `Preferences`, then `verify_fn`s run against the reloaded prefs. This guarantees: one backup per apply, no partial writes if any module rejects, and a single kill-browser + restart cycle.
 
 **TOML table semantics for unified apply:**
 - **Missing table** (no `[settings]` header): module is skipped entirely. State file untouched. This is the safe default for users who only manage one namespace.
@@ -81,9 +81,9 @@ This is the load-bearing knowledge for `brave/shortcuts.py`:
 
 2. **Why direct JSON patching is safe.** `brave.accelerators` is a `RegisterDictionaryPref` in regular `Preferences`, not in `Secure Preferences` — it has no HMAC integrity check. Verified against `brave/components/commands/browser/accelerator_pref_manager.cc` upstream. Do not move logic to keys that ARE in `Secure Preferences` without first solving the MAC problem.
 
-3. **Why Brave must be closed.** Brave rewrites `Preferences` on exit from its in-memory `PrefService` (and on periodic flushes). Writing while Brave runs gets clobbered. `brave_running()` enforces this. The `--kill-brave` flag is the escape hatch: it captures Brave's main-process cmdline, SIGKILLs Brave (so it can't flush over our changes), applies, then relaunches it.
+3. **Why Brave must be closed.** Brave rewrites `Preferences` on exit from its in-memory `PrefService` (and on periodic flushes). Writing while Brave runs gets clobbered. `brave_running()` enforces this. The `--kill-browser` flag is the escape hatch: it captures Brave's main-process cmdline, SIGKILLs Brave (so it can't flush over our changes), applies, then relaunches it.
 
-   Robustness notes for `--kill-brave`:
+   Robustness notes for `--kill-browser`:
    - **Process detection is platform-specific.** `_brave_proc_name()` returns `"brave"` on Linux and `"Brave Browser"` (with a space) on macOS — that's the literal basename `pgrep -x` matches. On macOS, helper processes have different basenames (`Brave Browser Helper`, `Brave Browser Helper (GPU)`, ...) so `pgrep -x` already excludes them; on Linux they're all `brave` so the `--type=...` arg filter in `find_main_brave_cmdline` is what isolates the main process.
    - **Reading argv is platform-specific.** Linux: `/proc/<pid>/cmdline`. Chromium subprocesses overwrite their argv region (setproctitle-style), losing null separators — fall back to `shlex.split`. macOS has no `/proc`, so `_read_cmdline` shells out to `ps -o command= -p <pid>` and shlex-splits the result.
    - **Restart is platform-specific.** Linux: prefer `shutil.which("brave-browser")` over the captured argv[0] because the captured path is the inner binary (`/opt/brave.com/brave/brave`); launching that directly bypasses the wrapper's `CHROME_WRAPPER`/`PATH` setup and silently breaks default-browser registration and URL handlers. macOS: launch via `open -a "Brave Browser" --args ...` so Launch Services starts the .app bundle properly (re-registers URL handlers, restores dock state).

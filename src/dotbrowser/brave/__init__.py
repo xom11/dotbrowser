@@ -6,7 +6,7 @@ Top-level CLI shape:
 
 Where <ACTION> is one of:
 - `apply <file>` — unified apply for `[shortcuts]` and `[settings]`
-  tables in a single TOML file (this module). Single kill-brave +
+  tables in a single TOML file (this module). Single kill-browser +
   backup + write_atomic cycle covers both modules.
 - `shortcuts dump|list` — read-only inspection (delegated to shortcuts).
 - `settings dump` — read-only inspection (delegated to settings).
@@ -128,11 +128,11 @@ def cmd_apply(args: argparse.Namespace) -> None:
 
     saved_cmdline: list[str] | None = None
     if brave_running():
-        if not args.kill_brave:
+        if not args.kill_browser:
             sys.exit(
-                "error: Brave is running. Close it first, or pass --kill-brave\n"
+                "error: Brave is running. Close it first, or pass --kill-browser\n"
                 "(Brave caches prefs in memory and overwrites the file on exit,\n"
-                "so editing while running is unreliable. --kill-brave SIGKILLs\n"
+                "so editing while running is unreliable. --kill-browser SIGKILLs\n"
                 "Brave to prevent the flush, applies, then restarts it.)"
             )
         saved_cmdline = find_main_brave_cmdline()
@@ -165,7 +165,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
     if saved_cmdline:
         used = restart_brave(saved_cmdline)
         print(f"restarting Brave: {' '.join(used)}")
-    elif args.kill_brave:
+    elif args.kill_browser:
         print("Brave killed; could not capture original command line — restart manually.")
 
 
@@ -173,6 +173,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser("brave", help="Brave browser commands")
     if DEFAULT_PROFILE_ROOT is not None:
         p.add_argument(
+            "-r",
             "--profile-root",
             type=Path,
             default=DEFAULT_PROFILE_ROOT,
@@ -180,12 +181,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         )
     else:
         p.add_argument(
+            "-r",
             "--profile-root",
             type=Path,
             required=True,
             help=f"required (no default for platform {sys.platform!r})",
         )
     p.add_argument(
+        "-p",
         "--profile",
         default="Default",
         help="profile dir name (default: Default)",
@@ -197,9 +200,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="apply [shortcuts] and [settings] tables from a TOML config",
     )
     a.add_argument("config", type=Path)
-    a.add_argument("--dry-run", action="store_true")
+    a.add_argument("-n", "--dry-run", action="store_true")
     a.add_argument(
-        "--kill-brave",
+        "-k",
+        "--kill-browser",
         action="store_true",
         help="if Brave is running, SIGKILL it (so it can't flush in-memory "
         "prefs over our changes), apply, then restart it",
