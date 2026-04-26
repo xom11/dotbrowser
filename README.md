@@ -6,7 +6,7 @@
 
 Manage your browser as a dotfile. Keep Brave shortcuts and UI tweaks in a single TOML, apply with one command, sync across machines — no browser cloud sync required.
 
-> **Status: alpha.** Brave on Linux + macOS — keyboard shortcuts and general settings (vertical tabs, sidebar, NTP & toolbar declutter, …). Architecture is designed to grow to other browsers.
+> **Status: alpha.** Brave on Linux + macOS — keyboard shortcuts, general settings (vertical tabs, sidebar, NTP & toolbar declutter, …), and force-installed PWAs (Linux only for now). Architecture is designed to grow to other browsers.
 
 ## Quick start
 
@@ -47,7 +47,7 @@ Pin a version: `pipx install "dotbrowser>=0.3,<0.4"`. Run a specific tag: `uvx -
 
 ## Build your own config
 
-`brave.toml` carries `[shortcuts]` and `[settings]`. One `apply` writes both in a single backup + write cycle.
+`brave.toml` carries `[shortcuts]`, `[settings]` and `[pwa]`. One `apply` writes all three in a single backup + write cycle.
 
 ```toml
 # brave.toml
@@ -69,6 +69,15 @@ close_tab = ["Control+KeyW", "Meta+KeyW"]
 "brave.tabs.vertical_tabs_enabled"   = true
 "brave.tabs.vertical_tabs_collapsed" = true
 "bookmark_bar.show_on_all_tabs"      = false
+
+[pwa]
+# Force-installed Progressive Web Apps. Brave fetches each manifest,
+# downloads icons, registers the app in chrome://apps, and emits a
+# .desktop launcher. Removing a URL + re-applying = uninstall.
+urls = [
+  "https://squoosh.app/",
+  "https://app.element.io/",
+]
 ```
 
 ```bash
@@ -78,7 +87,8 @@ dotbrowser brave apply brave.toml -k           # apply, SIGKILL + restart Brave
 
 - **Shortcut keys**: Chromium [KeyEvent codes](https://www.w3.org/TR/uievents-code/) joined by `+` — `Control+Shift+KeyP`, `Alt+Digit1`, `F11`.
 - **Setting keys**: dotted paths into the profile `Preferences` JSON.
-- **Empty `[settings]` header** (no entries) wipes everything dotbrowser previously managed in that namespace. **Missing header** = skip the namespace entirely.
+- **PWA URLs**: every entry installs with `default_launch_container = "window"` (standalone PWA window) and `create_desktop_shortcut = true`. `[pwa]` is the only namespace that needs `sudo` (writes `/etc/brave/policies/managed/dotbrowser-pwa.json`) and is **Linux only** for now — macOS plist support is planned. If your config has no `[pwa]` table or no diff to apply, no sudo prompt happens.
+- **Empty `[settings]` header** (no entries) wipes everything dotbrowser previously managed in that namespace. **Missing header** = skip the namespace entirely. Same rule applies to `[shortcuts]` and `[pwa]`.
 
 ## CLI reference
 
@@ -98,9 +108,9 @@ These apply to **every** action under `brave` and go *before* the action name.
 dotbrowser brave -r /custom/path -p "Profile 1" apply brave.toml
 ```
 
-### `apply <config>` — write `[shortcuts]` + `[settings]`
+### `apply <config>` — write `[shortcuts]` + `[settings]` + `[pwa]`
 
-`<config>` is a local TOML file path **or** an `http://`/`https://` URL. URLs are fetched in-memory; the URL, byte size, and SHA-256 are printed before the diff so you can verify exactly what's about to be applied.
+`<config>` is a local TOML file path **or** an `http://`/`https://` URL. URLs are fetched in-memory; the URL, byte size, and SHA-256 are printed before the diff so you can verify exactly what's about to be applied. If the config contains a non-empty `[pwa]` table, dotbrowser runs a sudo preflight *before* killing Brave so an auth failure cannot strand the user with a dead browser.
 
 | Flag | What it does |
 |---|---|
@@ -150,20 +160,33 @@ dotbrowser brave settings dump
 dotbrowser brave settings dump brave.tabs.vertical_tabs_enabled bookmark_bar.show_on_all_tabs
 ```
 
+### `pwa dump` — emit currently-managed PWA URLs as TOML
+
+Reads the managed-policy file at `/etc/brave/policies/managed/dotbrowser-pwa.json` and prints a `[pwa]` table you can paste straight into your config. World-readable file → no sudo needed for `dump`.
+
+| Flag | What it does |
+|---|---|
+| `-o, --output FILE` | Write to FILE instead of stdout. |
+
+```bash
+dotbrowser brave pwa dump                      # what does dotbrowser have force-installed?
+```
+
 ## How it works
 
 `dotbrowser` patches Brave's profile `Preferences` JSON directly. It refuses to run while Brave is open (Brave overwrites the file on exit) — `-k` is the escape hatch: SIGKILL Brave, apply, restart. Each apply takes one timestamped backup, writes atomically (temp file + rename), and verifies the result by reloading.
 
-Managed entries are tracked per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores Brave's default on the next `apply`.
+`[shortcuts]` and `[settings]` track managed entries per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores Brave's default on the next `apply`. `[pwa]` is different: its state lives in Chromium's managed-policy file at `/etc/brave/policies/managed/dotbrowser-pwa.json` (the policy file *is* the state — no sidecar). Brave reads that file at startup, fetches each URL's manifest, downloads icons, and emits a `.desktop` launcher; removing a URL from `[pwa]` and re-applying tells Brave to uninstall on next launch — same TOML-is-source-of-truth round-trip as the other namespaces.
 
 Default profile root: `~/.config/BraveSoftware/Brave-Browser` on Linux, `~/Library/Application Support/BraveSoftware/Brave-Browser` on macOS. Override with `-r/--profile-root`.
 
 ## Caveats
 
 - **Brave Sync** can overwrite `[settings]` entries on its next pulse if they fall in a synced category. UI-layout keys like `brave.tabs.vertical_tabs_*` are local-only and immune.
-- **Linux + macOS only.** Windows needs a custom `--profile-root` and process-management path.
+- **Linux + macOS only** for `[shortcuts]`/`[settings]`. **`[pwa]` is Linux-only** for now (macOS uses a plist at `/Library/Managed Preferences/com.brave.Browser.plist` which the implementation doesn't yet handle). Windows needs a custom `--profile-root` and process-management path.
 - **Brave only.** Chrome hardcodes shortcuts (no UI to customize), so this approach doesn't apply.
 - A handful of settings (`homepage`, default search engine, `pinned_tabs`, …) are integrity-protected and can't be patched yet — dotbrowser refuses them with a clear error rather than letting the change silently disappear on next launch. Set those via the Brave UI for now.
+- **`[pwa]` is force-install** (Chromium's enterprise `WebAppInstallForceList`). Apps installed this way appear in `chrome://apps` with an "Installed by your administrator" label and the right-click "Remove" option is hidden — to uninstall, delete the URL from `[pwa]` and re-apply, then dotbrowser/Brave does the rest. This is the right semantics for dotfile-style management (the TOML is the source of truth) but worth knowing if you also install PWAs by hand via the address-bar Install button.
 
 ## Roadmap
 

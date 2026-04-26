@@ -126,7 +126,12 @@ show_history   = ["Control+KeyH"]
 #     and re-apply.
 #   - Linux only for now; macOS uses a plist at
 #     /Library/Managed Preferences/com.brave.Browser.plist and is planned next.
-[pwa]
-urls = [
-  "https://squoosh.app/",
-]
+#
+# Uncomment + edit to force-install PWAs. Left commented in the shipped
+# example so the quick-start `apply` doesn't drag in extra apps + a sudo
+# prompt for users who only want the shortcuts/settings tweaks.
+#
+# [pwa]
+# urls = [
+#   "https://squoosh.app/",
+# ]
