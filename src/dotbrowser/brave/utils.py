@@ -31,14 +31,23 @@ class Plan:
     afterwards, and `verify_fn`s run against the reloaded prefs.
 
     `diff_lines` empty ⇔ this module has nothing to do for this config.
+
+    Most modules persist to the profile `Preferences` JSON via `apply_fn`
+    and a sidecar at `state_path`. Modules that own their own external
+    persistence (e.g. `pwa`, which writes Brave's managed-policy file
+    under /etc/) leave `state_path`/`state_payload` as None and do their
+    write inside `external_apply_fn`, which the orchestrator runs after
+    `write_atomic(prefs)` so a Preferences-side failure cannot leave the
+    external state out of sync.
     """
 
-    namespace: str  # e.g. "shortcuts" or "settings" — used as a section header
+    namespace: str  # e.g. "shortcuts", "settings", "pwa" — also the diff-section header
     diff_lines: list[str]
-    state_path: Path
-    state_payload: dict[str, Any]
     apply_fn: Callable[[dict], None]
     verify_fn: Callable[[dict], None]
+    state_path: Path | None = None
+    state_payload: dict[str, Any] | None = None
+    external_apply_fn: Callable[[], None] | None = None
 
     @property
     def empty(self) -> bool:

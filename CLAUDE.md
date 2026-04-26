@@ -42,7 +42,8 @@ Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]
 - `test_smoke.py` — invokes the CLI as a subprocess against the real on-disk Brave profile (read-only `list`/`dump`/`apply --dry-run`). Skipped if no profile is found.
 - `test_apply_live.py` — synthesizes a fake `Preferences` and exercises the unified apply path with a `[shortcuts]`-only TOML.
 - `test_settings_apply.py` — same idea but `[settings]`-only; covers apply/refuse-MAC/drop-key, including the `protection.macs` parent-of-tracked-leaf refusal.
-- `test_unified_apply.py` — cross-module orchestration: combined diff, single backup per apply, settings-refusal blocking shortcuts write, and missing-vs-empty table semantics.
+- `test_unified_apply.py` — cross-module orchestration: combined diff, single backup per apply, settings-refusal blocking shortcuts write, missing-vs-empty table semantics, and the three-namespace (shortcuts + settings + pwa) round-trip.
+- `test_pwa_apply.py` — `[pwa]`-only end-to-end. Linux-skipped elsewhere. Redirects `pwa.POLICY_FILE` into `tmp_path` and stubs `_sudo_write_policy` + the orchestrator's `sudo -v` preflight, so the suite never touches `/etc/` or prompts for a password.
 
 The `--kill-browser` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
@@ -50,22 +51,28 @@ The `--kill-browser` path is intentionally NOT covered by pytest (it would inter
 
 **CLI shape: `dotbrowser <BROWSER> [browser-options] <ACTION> [args]`**
 
-`apply` is at the browser level — one command writes both `[shortcuts]` and `[settings]` from a single TOML file in a single backup + write cycle. Per-module subcommands (`shortcuts`, `settings`) only host read-only inspection actions (`dump`, `list`).
+`apply` is at the browser level — one command writes `[shortcuts]`, `[settings]` and `[pwa]` from a single TOML file in a single backup + write cycle. Per-module subcommands (`shortcuts`, `settings`, `pwa`) only host read-only inspection actions (`dump`, `list`).
 
 ```
 cli.py           → mounts brave/__init__.py::register
 brave/__init__   → adds `apply` action; mounts brave/shortcuts.py + brave/settings.py
-                   for read-only inspection. Holds the I/O cycle (kill-browser,
-                   backup, write_atomic, write state files, verify, restart).
+                   + brave/pwa.py for read-only inspection. Holds the I/O cycle
+                   (sudo-preflight, kill-browser, backup, write_atomic, run
+                   external_apply_fns, write state files, verify, restart).
 brave/shortcuts  → exposes `plan_apply(prefs_path, prefs, raw_table) -> Plan`
                    plus dump/list CLI actions.
 brave/settings   → exposes `plan_apply(prefs_path, prefs, raw_table) -> Plan`
                    plus dump CLI action.
+brave/pwa        → exposes `plan_apply(prefs_path, prefs, raw_table) -> Plan`
+                   plus dump CLI action. Sets `external_apply_fn` to sudo-write
+                   `/etc/brave/policies/managed/dotbrowser-pwa.json`; leaves
+                   apply_fn/verify_fn/state_path empty since pwa state lives
+                   outside the profile.
 brave/utils      → shared helpers (process detection, kill/restart, write_atomic,
                    get_nested) and the `Plan` dataclass.
 ```
 
-**The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure — validates the TOML table, reads its sidecar state file, computes the diff, and returns a `Plan` with: `namespace`, `diff_lines`, `state_path`, `state_payload`, `apply_fn(prefs)`, `verify_fn(reloaded)`. The orchestrator collects plans, prints the combined diff, and runs all `apply_fn`s against one in-memory `Preferences` dict before a single `write_atomic`. State sidecars are written after `Preferences`, then `verify_fn`s run against the reloaded prefs. This guarantees: one backup per apply, no partial writes if any module rejects, and a single kill-browser + restart cycle.
+**The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure — validates the TOML table, reads existing state, computes the diff, and returns a `Plan` with `namespace`, `diff_lines`, `apply_fn(prefs)`, `verify_fn(reloaded)`, plus optional `state_path`/`state_payload` (for sidecar persistence) and optional `external_apply_fn` (for side effects outside `Preferences`, like pwa's policy file write). The orchestrator collects plans, prints the combined diff, runs a sudo preflight if any plan has an `external_apply_fn`, then in order: kills Brave (if needed), backs up Preferences, runs all `apply_fn`s against one in-memory dict, `write_atomic`, runs all `external_apply_fn`s, writes state sidecars, runs `verify_fn`s. This guarantees: one backup per apply, no partial writes if any module rejects, sudo prompts come *before* the kill so an auth failure doesn't strand the user with a dead browser, and a single kill-browser + restart cycle.
 
 **TOML table semantics for unified apply:**
 - **Missing table** (no `[settings]` header): module is skipped entirely. State file untouched. This is the safe default for users who only manage one namespace.
@@ -111,6 +118,24 @@ This is the load-bearing knowledge for `brave/settings.py`:
 5. **Sidecar state file.** `Preferences.dotbrowser.settings.json` (separate from the shortcuts one) tracks managed dotted-path keys. Same crash-safety story as shortcuts: orchestrator writes `Preferences` first, state file second.
 
 6. **`dump` semantics.** With no args, dump emits currently-managed keys. With explicit keys, it emits those — useful for "what's the current value?" discovery before adding a key to a config. Missing keys appear as commented-out lines so the user knows we looked but didn't find them.
+
+### Brave pwa: how force-install actually works
+
+This is the load-bearing knowledge for `brave/pwa.py`:
+
+1. **Mechanism is Chromium's enterprise `WebAppInstallForceList` policy.** Listing a URL there causes Brave on next launch to fetch the manifest, download icons, register the app in `chrome://apps`, and emit a `.desktop` launcher (Linux) at `~/.local/share/applications/brave-<app_id>-Default.desktop`. Removing the URL + restarting causes Brave to uninstall the app, delete the icons directory, and remove the .desktop file. We don't reimplement any of this — Brave does it for us. Verified end-to-end against Brave 147 on Linux: `chrome://web-app-internals` confirms `latest_install_source: "external policy"`, and the `RemoveInstallSourceJob` fires automatically on policy removal with `result: kAppRemoved`.
+
+2. **The policy file is the state.** Unlike shortcuts/settings (which keep a sidecar at `<Preferences>.dotbrowser.<ns>.json`), pwa's persistence is the policy file itself. Filename `dotbrowser-pwa.json` namespaces it so we never collide with policies installed by an MDM. `Plan.state_path` is therefore left `None`; the orchestrator skips the sidecar write for this module.
+
+3. **Why sudo, why preflight.** The Linux policy directory `/etc/brave/policies/managed/` is root-owned, so the policy write goes through `sudo tee`. The orchestrator runs `sudo -v` *before* killing Brave or backing up Preferences — if auth fails, nothing destructive happens. `_sudo_write_policy` is the single shell-out point and is what tests monkeypatch to skip sudo without losing apply-path coverage.
+
+4. **app_id is computed by Brave, not by us.** Chromium hashes the manifest_id (which usually equals the start_url) into the 32-char a-p extension-id format. Predicting it from the install URL is messy because manifests can declare a custom `id` field and append `utm_*` query params, so we deliberately don't try. We give Brave URLs; it gives us app_ids back via its own state.
+
+5. **`default_launch_container = "window"` matches the address-bar Install button.** That's the standalone PWA window experience users get from clicking the install icon. `create_desktop_shortcut = true` is meaningful only on Linux/Windows (Chromium itself ignores it on macOS); leaving it `true` is harmless cross-platform.
+
+6. **Brave restart is required for both install AND uninstall.** Policies are loaded at startup only — there's no live-reload signal. The orchestrator's existing `--kill-browser` flag covers this; pwa adds no new restart machinery.
+
+7. **Linux-only for v1.** `_check_platform_supported()` exits with a clear error on macOS/Windows. macOS support means swapping the JSON write for a plist write at `/Library/Managed Preferences/com.brave.Browser.plist` (use stdlib `plistlib`); the rest of the module — schema, diff, orchestration — is platform-neutral.
 
 ### Command-name mapping
 

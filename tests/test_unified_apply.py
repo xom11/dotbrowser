@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from dotbrowser import brave as brave_pkg
+from dotbrowser.brave import pwa as pwa_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -216,6 +217,71 @@ def test_missing_table_skips_module_entirely(
     assert settings_state_path.read_text() == settings_state_before
     p_after = json.loads((combined_profile_root / "Default" / "Preferences").read_text())
     assert p_after["brave"]["tabs"]["vertical_tabs_enabled"] == settings_value_before
+
+
+def test_three_namespace_apply_in_one_cycle(
+    combined_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """[shortcuts] + [settings] + [pwa] in one TOML must all apply in a
+    single backup + write_atomic cycle. pwa's external (sudo) write
+    must run AFTER Preferences are durable on disk so a sudo failure
+    cannot leave shortcuts/settings unwritten — even though here it
+    succeeds.
+    """
+    if not sys.platform.startswith("linux"):
+        pytest.skip("pwa apply path is implemented for Linux only at this time")
+
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+
+    # Redirect pwa's policy file and neutralize sudo (mirroring the
+    # fake_policy fixture in test_pwa_apply.py — duplicated rather than
+    # extracted because pulling it into a conftest would force the
+    # other tests to depend on a pwa-shaped fixture).
+    fake_policy = tmp_path / "policy" / "dotbrowser-pwa.json"
+    monkeypatch.setattr(pwa_mod, "POLICY_FILE", fake_policy)
+
+    def fake_sudo_write(entries):
+        fake_policy.parent.mkdir(parents=True, exist_ok=True)
+        fake_policy.write_text(json.dumps({pwa_mod.POLICY_KEY: entries}, indent=2) + "\n")
+
+    monkeypatch.setattr(pwa_mod, "_sudo_write_policy", fake_sudo_write)
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if list(cmd[:3]) == ["sudo", "-n", "true"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if list(cmd[:2]) == ["sudo", "-v"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(brave_pkg.subprocess, "run", fake_run)
+
+    cfg = tmp_path / "brave.toml"
+    cfg.write_text(
+        '[shortcuts]\n'
+        'focus_location = ["Alt+KeyD"]\n'
+        '\n'
+        '[settings]\n'
+        '"brave.tabs.vertical_tabs_enabled" = true\n'
+        '\n'
+        '[pwa]\n'
+        'urls = ["https://squoosh.app/"]\n'
+    )
+    _apply(combined_profile_root, cfg)
+
+    # All three namespaces landed
+    p = json.loads((combined_profile_root / "Default" / "Preferences").read_text())
+    from dotbrowser.brave.command_ids import NAME_TO_ID
+
+    assert p["brave"]["accelerators"][str(NAME_TO_ID["focus_location"])] == ["Alt+KeyD"]
+    assert p["brave"]["tabs"]["vertical_tabs_enabled"] is True
+    pol = json.loads(fake_policy.read_text())
+    assert [e["url"] for e in pol[pwa_mod.POLICY_KEY]] == ["https://squoosh.app/"]
+
+    # Single backup despite three plans — that's the unified-cycle promise.
+    backups = list((combined_profile_root / "Default").glob("Preferences.bak.*"))
+    assert len(backups) == 1
 
 
 def test_empty_table_resets_managed_entries(

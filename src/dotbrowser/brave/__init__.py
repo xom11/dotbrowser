@@ -5,21 +5,24 @@ Top-level CLI shape:
     dotbrowser brave [--profile-root ...] [--profile ...] <ACTION> ...
 
 Where <ACTION> is one of:
-- `apply <file>` — unified apply for `[shortcuts]` and `[settings]`
-  tables in a single TOML file (this module). Single kill-browser +
-  backup + write_atomic cycle covers both modules.
+- `apply <file>` — unified apply for `[shortcuts]`, `[settings]` and
+  `[pwa]` tables in a single TOML file (this module). One kill-browser
+  + backup + write_atomic cycle covers all three modules.
 - `shortcuts dump|list` — read-only inspection (delegated to shortcuts).
 - `settings dump` — read-only inspection (delegated to settings).
+- `pwa dump` — read-only inspection (delegated to pwa).
 
-The two modules each expose a pure `plan_apply()` that returns a
-`Plan` (see utils.py). This module is the orchestrator: it loads
-`Preferences` once, asks each module to plan its changes, prints the
-combined diff, and runs a single I/O cycle.
+Each module exposes a pure `plan_apply()` that returns a `Plan`
+(see utils.py). This module is the orchestrator: it loads `Preferences`
+once, asks each module to plan its changes, prints the combined diff,
+and runs a single I/O cycle. Modules that own external state (pwa
+writes Brave's managed-policy file under /etc/) hook in via the
+`external_apply_fn` field on `Plan`, which fires after `write_atomic`.
 
 TOML semantics:
 - Missing table (no `[shortcuts]` header)  → that module is skipped
   entirely. State file untouched. Safe default for users who only
-  manage one of the two namespaces.
+  manage a subset of namespaces.
 - Empty table (`[settings]` with no entries) → all previously managed
   keys are reset (popped / reverted to default). State file becomes
   empty. This is the explicit "wipe my managed entries" gesture.
@@ -30,6 +33,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -41,6 +45,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from dotbrowser.brave import pwa as pwa_mod
 from dotbrowser.brave import settings as settings_mod
 from dotbrowser.brave import shortcuts as shortcuts_mod
 from dotbrowser.brave.utils import (
@@ -123,6 +128,12 @@ def _build_plans(prefs_path: Path, prefs: dict, doc: dict) -> list[Plan]:
                 prefs_path, prefs, doc[settings_mod.NAMESPACE]
             )
         )
+    if pwa_mod.NAMESPACE in doc:
+        plans.append(
+            pwa_mod.plan_apply(
+                prefs_path, prefs, doc[pwa_mod.NAMESPACE]
+            )
+        )
     return plans
 
 
@@ -141,7 +152,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
 
     if not plans:
         sys.exit(
-            "error: config has no [shortcuts] or [settings] table — nothing to apply"
+            "error: config has no [shortcuts], [settings] or [pwa] table — nothing to apply"
         )
 
     non_empty = [p for p in plans if not p.empty]
@@ -158,7 +169,42 @@ def cmd_apply(args: argparse.Namespace) -> None:
         print("\n(dry-run, nothing written)")
         return
 
+    # Preflight: any plan that escalates (currently only [pwa], which
+    # sudo-writes Brave's managed-policy file) must succeed at sudo
+    # *before* we kill Brave or back up Preferences. Otherwise an auth
+    # failure deep in apply would leave the user with a killed browser
+    # and a half-applied config.
+    #
+    # Two-step probe so the user gets the right behaviour in every
+    # context: `sudo -n true` is the silent fast path that succeeds for
+    # NOPASSWD users and warm credential caches without ever touching a
+    # TTY. Only on its failure do we fall back to `sudo -v`, which will
+    # prompt for a password — but only if there's a real terminal to
+    # prompt on. The interactive fallback is needed because `sudo -nv`
+    # mis-handles NOPASSWD on sudoers configs that set `Defaults use_pty`
+    # (sudo treats `-v` as a forced reauthentication regardless of
+    # NOPASSWD), so `-n true` is the only reliable "would sudo work?"
+    # signal we can use here.
+    needs_sudo = any(
+        p.external_apply_fn is not None and not p.empty for p in plans
+    )
+    if needs_sudo:
+        cached = subprocess.run(
+            ["sudo", "-n", "true"], stderr=subprocess.DEVNULL
+        ).returncode == 0
+        if not cached:
+            try:
+                subprocess.run(["sudo", "-v"], check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                sys.exit(
+                    "error: [pwa] requires sudo to write the managed-policy "
+                    f"file but auth failed: {e}\n"
+                    "(if running non-interactively, run `sudo -v` from a "
+                    "terminal first to cache credentials)"
+                )
+
     saved_cmdline: list[str] | None = None
+    brave_was_killed = False
     if brave_running():
         if not args.kill_browser:
             sys.exit(
@@ -171,6 +217,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
         pids = _brave_pids()
         print(f"killing Brave (pids: {' '.join(pids)})")
         kill_brave_and_wait()
+        brave_was_killed = True
 
     backup = prefs_path.with_suffix(
         prefs_path.suffix + f".bak.{datetime.now():%Y%m%d-%H%M%S}"
@@ -184,10 +231,19 @@ def cmd_apply(args: argparse.Namespace) -> None:
         plan.apply_fn(prefs)
     write_atomic(prefs_path, prefs)
 
-    # State sidecars are written AFTER Preferences so a crash mid-apply
-    # doesn't claim ownership of keys we failed to write.
+    # External side effects (e.g. pwa's sudo policy-file write) run
+    # after Preferences are durable on disk. If one of these fails the
+    # prefs side is at least consistent with itself; we error out below.
     for plan in plans:
-        plan.state_path.write_text(json.dumps(plan.state_payload, indent=2))
+        if plan.external_apply_fn is not None:
+            plan.external_apply_fn()
+
+    # State sidecars are written AFTER Preferences so a crash mid-apply
+    # doesn't claim ownership of keys we failed to write. Modules with
+    # their own external persistence (pwa) leave state_path as None.
+    for plan in plans:
+        if plan.state_path is not None:
+            plan.state_path.write_text(json.dumps(plan.state_payload, indent=2))
 
     reloaded = load_prefs(prefs_path)
     for plan in plans:
@@ -197,7 +253,8 @@ def cmd_apply(args: argparse.Namespace) -> None:
     if saved_cmdline:
         used = restart_brave(saved_cmdline)
         print(f"restarting Brave: {' '.join(used)}")
-    elif args.kill_browser:
+    elif brave_was_killed:
+        # Killed but couldn't capture cmdline (rare race in find_main_brave_cmdline).
         print("Brave killed; could not capture original command line — restart manually.")
 
 
@@ -229,7 +286,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     a = sub.add_parser(
         "apply",
-        help="apply [shortcuts] and [settings] tables from a TOML config",
+        help="apply [shortcuts], [settings] and [pwa] tables from a TOML config",
     )
     a.add_argument(
         "config",
@@ -247,3 +304,4 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     shortcuts_mod.register(sub)
     settings_mod.register(sub)
+    pwa_mod.register(sub)
