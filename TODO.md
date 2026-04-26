@@ -11,35 +11,6 @@ the commit/PR if relevant) so the trail stays in-repo.
 
 ## Tier 1 — high value, worth tackling next
 
-### MAC-protected pref support (v2)
-
-Unlock writing to Chromium "tracked prefs": `homepage`,
-`session.startup_urls`, `browser.show_home_button`,
-`default_search_provider_data.template_url_data`, `pinned_tabs`,
-`omnibox.prevent_url_elisions`, etc. Today these are refused at apply
-time because writing them without updating their MAC causes Brave to
-silently reset them on next launch.
-
-**What it takes:**
-- Extract the Chromium `kSeed` constant (public, in
-  `services/preferences/tracked/pref_hash_calculator.cc`).
-- Implement `derived_key = HMAC-SHA256(seed, profile_path)` and
-  `MAC = HMAC-SHA256(derived_key, pref_path + serialized_value)`.
-- Match Chromium's `JSONStringValueSerializer` byte-for-byte
-  (key order, spacing, escape rules) — the hard part.
-- When applying a tracked pref, write the value AND update
-  `protection.macs.<dotted_path>` in the same `write_atomic`.
-- Add an `--allow-mac` opt-in flag so we don't surprise users on the
-  first apply after upgrade.
-
-**Why first:** This is the major remaining feature gap. Users hit the
-MAC wall as soon as they try common settings (homepage, default search
-engine), and no other tool does this for Brave on Linux.
-
-**Risk:** Medium-high. The crypto is trivial; the JSON serialization
-must be exact or every apply breaks. Needs careful end-to-end testing
-against a real Brave profile.
-
 ### Settings catalog generator
 
 Like `command_ids.py` for shortcuts, but for settings keys. Script
@@ -56,6 +27,21 @@ upstream pref name headers) into a generated `pref_names.py` mapping.
 **Scope:** Add `scripts/generate_brave_pref_names.py` (mirrors the
 existing `generate_brave_command_ids.py` shape), regenerate, plumb the
 mapping into `settings.py` validation. Mid-effort.
+
+### `--list-mac-keys` / `--show-blocked` flag
+
+Print every MAC-protected key in the user's profile so they know
+upfront which toggles `apply` will refuse, before they even write a
+config. Pairs naturally with the catalog generator: catalog gives the
+universe of known keys, this flag tells you which of them your profile
+currently has under `protection.macs.*`.
+
+This is the **practical replacement** for full MAC support — instead
+of patching MAC-protected prefs ourselves, we tell users clearly which
+~5–7 keys (homepage, default search, startup URLs, ...) they need to
+set via the Brave UI once and which keys dotbrowser can manage. See
+[#1](https://github.com/xom11/dotbrowser/issues/1) for the decision
+to skip full MAC v2 support.
 
 ---
 
@@ -75,11 +61,6 @@ mapping into `settings.py` validation. Mid-effort.
 Scaffold a `brave.toml` with sensible empty `[shortcuts]` and
 `[settings]` tables + commented examples. Drops the cold-start
 friction of "what do I put in this file?".
-
-### `--list-mac-keys` / `--show-blocked` flag
-Print every MAC-protected key in the user's profile so they know
-upfront which toggles `apply` will refuse, before they even write a
-config.
 
 ### Brave Sync warning
 At apply time, detect whether Brave Sync is enabled (look at
@@ -132,3 +113,35 @@ Different stack entirely. Firefox has no JSON `Preferences`; instead
 - [x] Unified `brave apply` for shortcuts + settings — commit `29b7465`
 - [x] CI on GitHub Actions (Linux + macOS, Python 3.11–3.13)
 - [x] Release-to-PyPI workflow on tag push
+
+---
+
+## Deferred — probably won't do
+
+### MAC-protected pref support (v2)
+
+Originally planned as Tier 1 — would unlock writing tracked prefs like
+`homepage`, `session.startup_urls`, `browser.show_home_button`,
+`default_search_provider_data.template_url_data`, `pinned_tabs`,
+`omnibox.prevent_url_elisions`. Decision on 2026-04-26: **skip**.
+Tracked in [#1](https://github.com/xom11/dotbrowser/issues/1).
+
+**TL;DR of the decision:**
+- Only ~5–7 user-relevant keys are MAC-protected; most overlap with
+  things users set once via UI (homepage, default search engine), not
+  the rapid-iteration use case dotfile management actually wins at.
+- Brave Sync covers cross-machine reproduction for these keys when it
+  is on, making dotfile management redundant.
+- Implementation cost is high: per-pref MAC + `protection.super_mac`
+  + byte-exact JSON serialization matching Chromium's
+  `JSONStringValueSerializer`. Re-serializing the entire
+  `protection.macs` subtree on every apply is the risky part.
+- Maintenance trap: Chromium has changed the MAC algorithm before; a
+  silent upstream change would corrupt every user's profile (apply
+  succeeds, Brave resets everything to default on next launch).
+- Better path: ship the catalog generator + `--list-mac-keys` so users
+  know which ~5–7 keys to set via UI, and dotbrowser stays out of the
+  crypto business.
+
+Revisit only if multiple users open issues asking for it. Until then,
+the refusal in `brave/settings.py::plan_apply` stays as the v1 contract.
