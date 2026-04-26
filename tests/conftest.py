@@ -8,6 +8,45 @@ import pytest
 
 
 @pytest.fixture
+def fake_settings_profile_root(tmp_path: Path) -> Path:
+    """Profile root for settings tests.
+
+    The synthesized `Preferences` includes one MAC-protected key
+    (`browser.show_home_button` mirrored under `protection.macs.*`) so
+    the refusal path can be exercised, plus several plain keys with
+    different value types (bool, string, list) for the apply round-trip.
+    """
+    profile = tmp_path / "Default"
+    profile.mkdir()
+    prefs = {
+        "brave": {
+            "tabs": {
+                "vertical_tabs_enabled": False,
+                "vertical_tabs_collapsed": True,
+            },
+        },
+        "bookmark_bar": {
+            "show_tab_groups": False,
+        },
+        "browser": {
+            "show_home_button": True,  # Mirror is in protection.macs below
+        },
+        "homepage": "https://existing-home.example",
+        "protection": {
+            "macs": {
+                "browser": {
+                    "show_home_button": "DEADBEEF" * 8,
+                },
+                "homepage": "CAFEBABE" * 8,
+            }
+        },
+        "some": {"unrelated": "preference"},
+    }
+    (profile / "Preferences").write_text(json.dumps(prefs))
+    return tmp_path
+
+
+@pytest.fixture
 def fake_profile_root(tmp_path: Path) -> Path:
     """A directory that mimics Brave's profile-root layout: a `Default`
     sub-folder containing a minimal `Preferences` JSON.

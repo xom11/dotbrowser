@@ -44,9 +44,9 @@ def test_default_profile_root_unsupported_returns_none(monkeypatch) -> None:
 )
 def test_proc_name_per_platform(monkeypatch, platform, expected_name) -> None:
     monkeypatch.setattr("sys.platform", platform)
-    from dotbrowser.brave import shortcuts
-    importlib.reload(shortcuts)
-    assert shortcuts._brave_proc_name() == expected_name
+    from dotbrowser.brave import utils
+    importlib.reload(utils)
+    assert utils._brave_proc_name() == expected_name
 
 
 def test_restart_uses_open_on_macos(monkeypatch) -> None:
@@ -54,8 +54,8 @@ def test_restart_uses_open_on_macos(monkeypatch) -> None:
     rather than launching the captured argv[0] directly. We capture the
     Popen call instead of actually spawning anything."""
     monkeypatch.setattr("sys.platform", "darwin")
-    from dotbrowser.brave import shortcuts
-    importlib.reload(shortcuts)
+    from dotbrowser.brave import utils
+    importlib.reload(utils)
 
     captured = {}
 
@@ -64,8 +64,8 @@ def test_restart_uses_open_on_macos(monkeypatch) -> None:
             captured["cmd"] = cmd
             captured["kwargs"] = kwargs
 
-    monkeypatch.setattr(shortcuts.subprocess, "Popen", FakePopen)
-    used = shortcuts.restart_brave([
+    monkeypatch.setattr(utils.subprocess, "Popen", FakePopen)
+    used = utils.restart_brave([
         "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
         "--enable-features=Foo",
     ])
@@ -86,8 +86,8 @@ def test_read_cmdline_macos_does_not_shlex_split(monkeypatch) -> None:
     into 4 garbage tokens and broke `restart_brave`. Now we keep it as a
     single element."""
     monkeypatch.setattr("sys.platform", "darwin")
-    from dotbrowser.brave import shortcuts
-    importlib.reload(shortcuts)
+    from dotbrowser.brave import utils
+    importlib.reload(utils)
 
     raw = b"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser\n"
 
@@ -95,17 +95,17 @@ def test_read_cmdline_macos_does_not_shlex_split(monkeypatch) -> None:
         assert cmd[0] == "ps"
         return raw
 
-    monkeypatch.setattr(shortcuts.subprocess, "check_output", fake_check_output)
-    out = shortcuts._read_cmdline("12345")
+    monkeypatch.setattr(utils.subprocess, "check_output", fake_check_output)
+    out = utils._read_cmdline("12345")
     assert out == ["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"]
 
 
 def test_restart_uses_wrapper_on_linux(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "linux")
-    from dotbrowser.brave import shortcuts
-    importlib.reload(shortcuts)
+    from dotbrowser.brave import utils
+    importlib.reload(utils)
 
-    monkeypatch.setattr(shortcuts.shutil, "which", lambda name: "/usr/bin/brave-browser" if name == "brave-browser" else None)
+    monkeypatch.setattr(utils.shutil, "which", lambda name: "/usr/bin/brave-browser" if name == "brave-browser" else None)
 
     captured = {}
 
@@ -113,8 +113,8 @@ def test_restart_uses_wrapper_on_linux(monkeypatch) -> None:
         def __init__(self, cmd, **kwargs):
             captured["cmd"] = cmd
 
-    monkeypatch.setattr(shortcuts.subprocess, "Popen", FakePopen)
-    used = shortcuts.restart_brave(["/opt/brave.com/brave/brave", "--flag=1"])
+    monkeypatch.setattr(utils.subprocess, "Popen", FakePopen)
+    used = utils.restart_brave(["/opt/brave.com/brave/brave", "--flag=1"])
     # Inner binary swapped for wrapper
     assert used[0] == "/usr/bin/brave-browser"
     assert "--flag=1" in used

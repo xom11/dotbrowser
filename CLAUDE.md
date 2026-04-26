@@ -19,9 +19,10 @@ python scripts/generate_brave_command_ids.py
 
 Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]"`). Run with `pytest` from the repo root. The suite has three layers:
 
-- `test_logic.py` / `test_platform.py` — pure-logic unit tests, run anywhere.
+- `test_logic.py` / `test_platform.py` — pure-logic unit tests, run anywhere. `test_platform.py` reloads `dotbrowser.brave.utils` (where the platform-aware process helpers live since the shortcuts/settings split).
 - `test_smoke.py` — invokes the CLI as a subprocess against the real on-disk Brave profile (read-only `list`/`dump`/`apply --dry-run`). Skipped if no profile is found.
-- `test_apply_live.py` — synthesizes a fake `Preferences` in a tmp dir and runs the full apply/reset round-trip. Runs anywhere.
+- `test_apply_live.py` — synthesizes a fake `Preferences` in a tmp dir and runs the full shortcuts apply/reset round-trip. Runs anywhere.
+- `test_settings_apply.py` — same idea for the `settings` module: covers apply/refuse-MAC/drop-key, including the `protection.macs` parent-of-tracked-leaf refusal.
 
 The `--kill-brave` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
@@ -33,8 +34,10 @@ The CLI is built from independent registration functions, not a monolithic argpa
 
 ```
 cli.py           → mounts brave/__init__.py::register
-brave/__init__   → mounts brave/shortcuts.py::register (and adds --profile-root, --profile)
+brave/__init__   → mounts brave/shortcuts.py and brave/settings.py (and adds --profile-root, --profile)
 brave/shortcuts  → adds apply/dump/list actions and sets args.func
+brave/settings   → adds apply/dump actions and sets args.func
+brave/utils      → shared helpers (process detection, kill/restart, write_atomic, get_nested)
 ```
 
 To add a new browser: create `src/dotbrowser/<name>/__init__.py` with `register(subparsers)` and call it from `cli.py::build_parser`. To add a new module under an existing browser: create the module file with `register(subparsers)` and call it from the browser's `__init__.py`. No central registry.
@@ -59,6 +62,22 @@ This is the load-bearing knowledge for `brave/shortcuts.py`:
 5. **Merge semantics.** `cmd_apply` is intentionally non-destructive: only IDs in the current config get overridden, plus IDs previously managed (via state file) but no longer in config get reset to their value from `brave.default_accelerators` (or popped if no default exists). Never wipe `brave.accelerators` entirely — it contains all of Brave's working bindings, not just user customizations.
 
 6. **Write order.** `write_atomic()` (temp + `os.replace`) → `_set_managed_ids()` → reload + verify. State file is written AFTER `Preferences` so a crash mid-apply doesn't claim ownership of IDs we failed to write.
+
+### Brave settings: how MAC refusal works
+
+This is the load-bearing knowledge for `brave/settings.py`:
+
+1. **Why MAC refusal exists.** Many UI-relevant prefs in `Preferences` (e.g. `homepage`, `session.startup_urls`, `browser.show_home_button`, `default_search_provider_data.template_url_data`, `pinned_tabs`) are Chromium "tracked prefs": each has a sibling entry under `protection.macs.<dotted_path>` containing an HMAC-SHA256 over `(pref_path, serialized_value)`. At launch Brave recomputes the MAC and resets the value to default if it doesn't match. Writing the value without updating the MAC is silently destructive — the change vanishes on next launch.
+
+2. **The check is profile-driven, not a hardcoded allowlist.** `_is_mac_protected(prefs, parts)` walks the user's actual `protection.macs` subtree. This avoids stale allowlists and works regardless of whether the key has been materialized in `Preferences` yet (the macs subtree is populated for every tracked pref the user has touched). Refusal is conservative: a parent dict of a tracked leaf is also refused, because writing the parent would clobber the tracked child.
+
+3. **`protection.*` is always refused.** That whole subtree is Chromium's MAC bookkeeping. Even if a key under it isn't itself MAC-protected, writing there has no defined semantics for us.
+
+4. **No default-mirror.** Unlike `brave.accelerators` (which has a `brave.default_accelerators` sibling we can read to revert a binding), there is no general "defaults" dict for arbitrary prefs. When a key is removed from the user's config, `_pop_value()` deletes the leaf — Brave then falls back to its compiled-in default on next read. That's the intended behavior; document it loudly because it differs from shortcuts.
+
+5. **Sidecar state file.** `Preferences.dotbrowser.settings.json` (separate from the shortcuts one) tracks managed dotted-path keys. Same crash-safety story as shortcuts: write `Preferences` first, state file second.
+
+6. **`dump` semantics.** With no args, dump emits currently-managed keys. With explicit keys, it emits those — useful for "what's the current value?" discovery before adding a key to a config. Missing keys appear as commented-out lines so the user knows we looked but didn't find them.
 
 ### Command-name mapping
 

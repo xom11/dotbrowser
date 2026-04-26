@@ -5,6 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from dotbrowser.brave import settings as settings_mod
 from dotbrowser.brave import shortcuts as shortcuts_mod
 
 
@@ -49,3 +50,4 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     sub = p.add_subparsers(dest="module", required=True, metavar="MODULE")
     shortcuts_mod.register(sub)
+    settings_mod.register(sub)
