@@ -11,6 +11,64 @@ the commit/PR if relevant) so the trail stays in-repo.
 
 ## Tier 1 — high value, worth tackling next
 
+### Brave `[pwa]` — macOS implementation
+
+Linux side is done on branch `feat/pwa` (commits `d1b1351`, `bd6f482`,
+not yet merged). Force-installs PWAs via Chromium's
+`WebAppInstallForceList` policy; verified end-to-end against Brave 147
+on Linux ARM64. macOS path is the only blocker before merging to
+`main` — `_check_platform_supported()` in `src/dotbrowser/brave/pwa.py`
+exits with a clear error on Darwin today.
+
+**Open hypothesis to test first** — does Brave honor
+`WebAppInstallForceList` set at user level via
+`defaults write com.brave.Browser WebAppInstallForceList -array '...'`,
+or only at machine level
+(`/Library/Managed Preferences/com.brave.Browser.plist`)?
+
+The policy is declared `scope: machine` in Chromium's policy schema,
+which suggests user-level should be ignored. But `CFPreferencesCopyAppValue`
+(what Chromium reads policies through) traverses user-level paths too,
+so practical behavior may differ. Concrete probe:
+
+```bash
+defaults write com.brave.Browser WebAppInstallForceList -array \
+  '{"url" = "https://squoosh.app/"; "default_launch_container" = "window"; "create_desktop_shortcut" = 1;}'
+open -a "Brave Browser"
+# wait ~30s, then check chrome://web-app-internals — does Squoosh appear
+# with latest_install_source = "external policy"?
+```
+
+- **If user-level works** → no-sudo macOS path: write to
+  `~/Library/Preferences/com.brave.Browser.plist` via `plistlib`, skip
+  the orchestrator's sudo preflight on Darwin. Strict UX win over Linux.
+- **If user-level ignored** → fall back to
+  `/Library/Managed Preferences/com.brave.Browser.plist`, write via
+  `sudo` + `plistlib`. Same sudo posture as Linux.
+
+**Code locations to touch:**
+- `src/dotbrowser/brave/pwa.py` — branch `_check_platform_supported`,
+  `POLICY_FILE`, `_read_current_policy`, `_sudo_write_policy` per
+  platform via `sys.platform`. plist serialization replaces JSON.
+- `src/dotbrowser/brave/__init__.py` — gate the sudo preflight on
+  whether the active platform path actually needs it.
+- `tests/test_pwa_apply.py` — relax the Linux-only `pytestmark` once
+  the macOS branch exists; add Darwin-specific cases if behavior
+  diverges (e.g. plist round-trip).
+- `examples/brave.toml` + `README.md` — drop the "Linux only" caveat
+  in the `[pwa]` block.
+- `CLAUDE.md` "Brave pwa: how force-install actually works", point 7 —
+  update once macOS lands.
+
+**Architecture decision already recorded:** keep
+`WebAppInstallForceList` (real PWA install) over `.desktop` launcher
+generation. Reasoning: file handlers, badging API, manifest fidelity,
+and Brave-driven manifest auto-update matter for some PWAs;
+force-install is the right semantics for declarative "TOML is source
+of truth" management. Trade-off accepted: Linux requires `sudo` per
+non-empty `[pwa]` apply, and UI uninstall is hidden (by design — the
+TOML is the source of truth, not the UI).
+
 ### Settings catalog generator
 
 Like `command_ids.py` for shortcuts, but for settings keys. Script
