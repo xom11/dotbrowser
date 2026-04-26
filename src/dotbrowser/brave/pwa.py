@@ -2,18 +2,38 @@
 
 Brave (Chromium) honors the enterprise policy `WebAppInstallForceList`:
 list URLs there and the browser fetches each manifest, downloads icons,
-registers the app in `chrome://apps`, and emits a `.desktop` launcher.
-Removing a URL from the list and restarting Brave causes it to uninstall
-the app (deleting icons + the .desktop file) — a clean round-trip that
-matches dotbrowser's "TOML is source of truth" model already used by
-`[shortcuts]` and `[settings]`.
+registers the app in `chrome://apps`, and emits a launcher (a `.desktop`
+file on Linux, an .app shim under `~/Applications/Brave Apps.localized`
+on macOS). Removing a URL from the list and restarting Brave causes it
+to uninstall the app — a clean round-trip that matches dotbrowser's
+"TOML is source of truth" model already used by `[shortcuts]` and
+`[settings]`.
 
-The policy file lives outside the user's profile (`/etc/brave/policies/
-managed/dotbrowser-pwa.json` on Linux) and so requires `sudo` to write.
+The policy file lives outside the user's profile and requires `sudo` to
+write on both supported platforms:
+
+- Linux: `/etc/brave/policies/managed/dotbrowser-pwa.json` (JSON,
+  namespaced by filename so dotbrowser never collides with policies
+  installed by an MDM).
+- macOS: `/Library/Managed Preferences/com.brave.Browser.plist` (binary
+  plist keyed by Brave's bundle ID — there is exactly one such file per
+  app, so we *cannot* namespace by filename and must read-modify-write
+  the single `WebAppInstallForceList` key while preserving any unrelated
+  MDM-managed keys in the same plist). Each write also kicks cfprefsd
+  with `sudo killall cfprefsd` so its in-memory cache picks up the new
+  file; without that step Brave silently launches with the *previous*
+  policy state because cfprefsd doesn't watch its backing files for
+  external changes (it assumes ownership of writes via its XPC API).
+
+The user-level macOS path (`~/Library/Preferences/com.brave.Browser.plist`
+via `defaults write`) was tested and rejected: Chromium classifies
+`WebAppInstallForceList` as `scope: machine`, so values written there
+load as recommended (not mandatory) and the install-force-list handler
+ignores them. Probe procedure recorded in TODO.md.
+
 This is the only module in dotbrowser today that escalates privileges,
 and it is also the only module whose persisted state is *not* a sidecar
-next to `Preferences` — the policy file itself is the source of truth,
-namespaced by filename so we never collide with other policies.
+next to `Preferences` — the policy file itself is the source of truth.
 
 Config schema (TOML), inside the unified `brave.toml`:
 
@@ -33,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -42,11 +63,24 @@ from dotbrowser.brave.utils import Plan, find_preferences
 
 NAMESPACE = "pwa"
 
-# The filename is namespace-specific so dotbrowser never collides with
-# policies installed by an MDM or other admin tooling. A user inspecting
-# /etc/brave/policies/managed/ can tell at a glance what's ours.
-POLICY_FILE = Path("/etc/brave/policies/managed/dotbrowser-pwa.json")
 POLICY_KEY = "WebAppInstallForceList"
+
+
+def _default_policy_file() -> Path | None:
+    """Per-platform location of the managed-policy file dotbrowser writes."""
+    if sys.platform.startswith("linux"):
+        return Path("/etc/brave/policies/managed/dotbrowser-pwa.json")
+    if sys.platform == "darwin":
+        # Bundle-ID-named plist; cannot be namespaced by filename, so the
+        # write path is read-modify-write to preserve unrelated MDM keys.
+        return Path("/Library/Managed Preferences/com.brave.Browser.plist")
+    return None
+
+
+# Module-level so tests can monkeypatch it into a tmp path. None on
+# unsupported platforms — `_check_platform_supported` errors out before
+# anything that uses the path is reached.
+POLICY_FILE = _default_policy_file()
 
 # Defaults applied to every entry produced from `urls = [...]`. The
 # `default_launch_container` value `window` matches the UX users get when
@@ -60,21 +94,18 @@ _DEFAULT_ENTRY = {
 
 
 def _check_platform_supported() -> None:
-    """Bail out clearly if we're on a platform we haven't wired up yet.
+    """Bail out clearly on platforms we haven't wired up yet.
 
-    The schema and orchestration are platform-agnostic, but the policy
-    file path and serialization format differ: macOS reads policies from
-    a plist at `/Library/Managed Preferences/com.brave.Browser.plist`,
-    not a JSON file under `/etc/`. Adding macOS later will be a small
-    change to `POLICY_FILE` + the read/write helpers; until then, refuse
-    rather than silently doing nothing.
+    Linux + macOS share schema, orchestration, validation, and diff
+    computation; they only diverge at serialization (JSON vs binary
+    plist) and file path. Windows would need a new path under
+    `HKLM\\Software\\Policies\\BraveSoftware\\Brave\\` (registry, not a
+    file) — not yet implemented.
     """
-    if not sys.platform.startswith("linux"):
+    if POLICY_FILE is None:
         sys.exit(
-            f"error: [pwa] is implemented for Linux only at this time "
-            f"(platform={sys.platform!r}). macOS support requires the "
-            f"plist path /Library/Managed Preferences/com.brave.Browser.plist "
-            f"and is planned next."
+            f"error: [pwa] is not yet implemented on platform={sys.platform!r}. "
+            f"Linux and macOS are supported."
         )
 
 
@@ -114,20 +145,39 @@ def _validate_table(raw: object) -> list[str]:
     return out
 
 
-def _read_current_policy() -> dict[str, dict]:
-    """Parse `POLICY_FILE` into `{url: entry_dict}`. Empty if no file.
+def _read_existing_payload() -> dict:
+    """Return the full parsed policy file (whole dict), or `{}` if missing.
 
-    The file is world-readable (mode 0644 from `sudo install`), so this
-    runs without escalation. A malformed file is treated as empty rather
-    than fatal so a previous half-written run doesn't permanently brick
-    the apply path — the next write will replace it.
+    On macOS this dict may carry unrelated MDM keys that we have to
+    preserve when we round-trip — `_build_policy_payload` uses this to
+    merge our key without clobbering those. On Linux the file is
+    namespaced by filename so the result will only ever contain our key.
+
+    Both formats are world-readable (mode 0644 / 0644 respectively), so
+    this runs without escalation. A malformed file is treated as empty
+    rather than fatal so a previous half-written run doesn't permanently
+    brick the apply path — the next write will replace it.
     """
-    if not POLICY_FILE.exists():
+    if POLICY_FILE is None or not POLICY_FILE.exists():
         return {}
     try:
-        data = json.loads(POLICY_FILE.read_text())
-    except (json.JSONDecodeError, OSError):
+        if sys.platform == "darwin":
+            with POLICY_FILE.open("rb") as f:
+                data = plistlib.load(f)
+        else:
+            data = json.loads(POLICY_FILE.read_text())
+    except (json.JSONDecodeError, plistlib.InvalidFileException, OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _read_current_policy() -> dict[str, dict]:
+    """Extract our managed `WebAppInstallForceList` entries as `{url: entry}`.
+
+    Ignores any unrelated keys in the file (only relevant on macOS, where
+    the plist is shared with potential MDM policies).
+    """
+    data = _read_existing_payload()
     entries = data.get(POLICY_KEY, [])
     if not isinstance(entries, list):
         return {}
@@ -142,6 +192,26 @@ def _entry_for(url: str) -> dict[str, Any]:
     return {"url": url, **_DEFAULT_ENTRY}
 
 
+def _build_policy_payload(entries: list[dict]) -> bytes:
+    """Serialize entries into the on-disk policy bytes for this platform.
+
+    Linux: the file is namespaced (`dotbrowser-pwa.json`) so we can own
+    the whole document — write a fresh `{POLICY_KEY: entries}` JSON.
+
+    macOS: the file is the per-bundle-ID plist shared with any active
+    MDM, so we read-modify-write — merge `entries` into our key while
+    preserving every other top-level key. We use binary plist
+    (`FMT_BINARY`) to match what `defaults` writes; users can inspect
+    with `plutil -p <file>`.
+    """
+    if sys.platform == "darwin":
+        merged = dict(_read_existing_payload())
+        merged[POLICY_KEY] = entries
+        return plistlib.dumps(merged, fmt=plistlib.FMT_BINARY)
+    payload = {POLICY_KEY: entries}
+    return (json.dumps(payload, indent=2) + "\n").encode("utf-8")
+
+
 def diff_summary(current: dict[str, dict], target_urls: list[str]) -> list[str]:
     target_set = set(target_urls)
     current_set = set(current)
@@ -154,27 +224,55 @@ def diff_summary(current: dict[str, dict], target_urls: list[str]) -> list[str]:
 
 
 def _sudo_write_policy(entries: list[dict]) -> None:
-    """Atomically replace `POLICY_FILE` with a JSON doc containing
-    `entries`, escalating via sudo since the path lives in `/etc/`.
+    """Atomically replace `POLICY_FILE` with `entries`, via sudo.
+
+    The path lives in a root-owned directory on both platforms
+    (`/etc/brave/policies/managed/` on Linux, `/Library/Managed
+    Preferences/` on macOS) so escalation is unavoidable. The
+    serialization differs per-platform but the install path doesn't —
+    `mkdir -p` + `tee` works the same on both.
 
     Tests monkeypatch this whole function (rather than the `subprocess`
     calls) so they don't need sudo and don't need to mock argv parsing.
+    The serialization in `_build_policy_payload` is still exercised live
+    through the test fixture's fake.
     """
-    payload = {POLICY_KEY: entries}
-    content = json.dumps(payload, indent=2) + "\n"
+    content = _build_policy_payload(entries)
     subprocess.run(
         ["sudo", "mkdir", "-p", "-m", "0755", str(POLICY_FILE.parent)],
         check=True,
     )
     # `sudo tee` writes the file as root with the default umask. The
-    # resulting mode is 0644, which is what Chromium expects for a
-    # readable managed policy file.
+    # resulting mode is 0644, which is what both Chromium (Linux managed
+    # policies) and cfprefsd (macOS managed preferences) expect.
     subprocess.run(
         ["sudo", "tee", str(POLICY_FILE)],
-        input=content.encode("utf-8"),
+        input=content,
         stdout=subprocess.DEVNULL,
         check=True,
     )
+
+    if sys.platform == "darwin":
+        # cfprefsd caches `CFPreferences*` lookups in memory and does
+        # NOT watch its backing files for external changes — it owns
+        # the writes and assumes nobody else touches them. Writing the
+        # plist via `tee` bypasses cfprefsd entirely, so any process
+        # (Brave on its next launch, our own read-back verify) that
+        # queries the policy via the CFPreferences API will still get
+        # the previously-cached value (typically: "no value set"),
+        # and Brave will silently launch without the policy applied.
+        # Killing cfprefsd forces it to re-scan on the next query;
+        # launchd respawns it transparently within milliseconds.
+        # Both the root daemon and the per-user agent are cleared so
+        # both Brave's policy_loader and our verify path get fresh
+        # data. `check=False` because killall returns 1 when there's
+        # nothing matching to kill (e.g. on a system that just booted
+        # and cfprefsd hasn't been demand-started yet).
+        subprocess.run(
+            ["sudo", "killall", "cfprefsd"],
+            check=False,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
@@ -232,10 +330,11 @@ def cmd_dump(args: argparse.Namespace) -> None:
     """Emit currently-managed URLs as a TOML `[pwa]` table.
 
     Unlike `settings dump`/`shortcuts dump`, there is no sidecar state
-    file to read — the policy file at /etc/ IS the state, and it is
-    world-readable. If the file does not exist or contains an empty
-    list, emit `urls = []` with a note rather than erroring out, since
-    "nothing managed" is a normal first-run state.
+    file to read — the platform-specific policy file IS the state, and
+    it is world-readable on both Linux and macOS. If the file does not
+    exist or contains an empty list, emit `urls = []` with a note rather
+    than erroring out, since "nothing managed" is a normal first-run
+    state.
     """
     _check_platform_supported()
     # `find_preferences` is invoked only to validate that the user has
@@ -270,9 +369,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
 
+    # `POLICY_FILE` is None on unsupported platforms; fall back to a
+    # generic blurb so `--help` still works without crashing at import.
+    _help_path = POLICY_FILE or "the managed-policy file"
     d = sub.add_parser(
         "dump",
-        help=f"emit URLs from {POLICY_FILE} as a `[pwa]` TOML table",
+        help=f"emit URLs from {_help_path} as a `[pwa]` TOML table",
     )
     d.add_argument("-o", "--output", help="write to file instead of stdout")
     d.set_defaults(func=cmd_dump)

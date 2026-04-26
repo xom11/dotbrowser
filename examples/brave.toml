@@ -115,17 +115,17 @@ show_history   = ["Control+KeyH"]
 # "TOML is source of truth" round-trip as [shortcuts] and [settings].
 #
 # IMPORTANT differences from the other tables:
-#   - REQUIRES SUDO. The policy file lives at
-#     /etc/brave/policies/managed/dotbrowser-pwa.json (Linux). Every apply
-#     that has a non-empty pwa diff prompts once for your password.
+#   - REQUIRES SUDO. The policy file is root-owned:
+#       Linux: /etc/brave/policies/managed/dotbrowser-pwa.json
+#       macOS: /Library/Managed Preferences/com.brave.Browser.plist
+#     Every apply that has a non-empty pwa diff prompts once for your
+#     password.
 #   - REQUIRES BRAVE RESTART. Policies are read at startup only, so
 #     install/uninstall takes effect on the next launch (or immediately if
 #     you pass --kill-browser).
 #   - Force-installed apps cannot be uninstalled via the Brave UI (the
 #     "Remove" option is hidden). To remove an app, delete its URL here
 #     and re-apply.
-#   - Linux only for now; macOS uses a plist at
-#     /Library/Managed Preferences/com.brave.Browser.plist and is planned next.
 #
 # Uncomment + edit to force-install PWAs. Left commented in the shipped
 # example so the quick-start `apply` doesn't drag in extra apps + a sudo

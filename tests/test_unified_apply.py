@@ -228,8 +228,8 @@ def test_three_namespace_apply_in_one_cycle(
     cannot leave shortcuts/settings unwritten — even though here it
     succeeds.
     """
-    if not sys.platform.startswith("linux"):
-        pytest.skip("pwa apply path is implemented for Linux only at this time")
+    if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
+        pytest.skip("pwa apply path is implemented for Linux + macOS")
 
     monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
 
@@ -237,12 +237,15 @@ def test_three_namespace_apply_in_one_cycle(
     # fake_policy fixture in test_pwa_apply.py — duplicated rather than
     # extracted because pulling it into a conftest would force the
     # other tests to depend on a pwa-shaped fixture).
-    fake_policy = tmp_path / "policy" / "dotbrowser-pwa.json"
+    if sys.platform == "darwin":
+        fake_policy = tmp_path / "policy" / "com.brave.Browser.plist"
+    else:
+        fake_policy = tmp_path / "policy" / "dotbrowser-pwa.json"
     monkeypatch.setattr(pwa_mod, "POLICY_FILE", fake_policy)
 
     def fake_sudo_write(entries):
         fake_policy.parent.mkdir(parents=True, exist_ok=True)
-        fake_policy.write_text(json.dumps({pwa_mod.POLICY_KEY: entries}, indent=2) + "\n")
+        fake_policy.write_bytes(pwa_mod._build_policy_payload(entries))
 
     monkeypatch.setattr(pwa_mod, "_sudo_write_policy", fake_sudo_write)
 
@@ -276,7 +279,12 @@ def test_three_namespace_apply_in_one_cycle(
 
     assert p["brave"]["accelerators"][str(NAME_TO_ID["focus_location"])] == ["Alt+KeyD"]
     assert p["brave"]["tabs"]["vertical_tabs_enabled"] is True
-    pol = json.loads(fake_policy.read_text())
+    if sys.platform == "darwin":
+        import plistlib
+        with fake_policy.open("rb") as f:
+            pol = plistlib.load(f)
+    else:
+        pol = json.loads(fake_policy.read_text())
     assert [e["url"] for e in pol[pwa_mod.POLICY_KEY]] == ["https://squoosh.app/"]
 
     # Single backup despite three plans — that's the unified-cycle promise.

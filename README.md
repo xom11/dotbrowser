@@ -6,7 +6,7 @@
 
 Manage your browser as a dotfile. Keep Brave shortcuts and UI tweaks in a single TOML, apply with one command, sync across machines — no browser cloud sync required.
 
-> **Status: alpha.** Brave on Linux + macOS — keyboard shortcuts, general settings (vertical tabs, sidebar, NTP & toolbar declutter, …), and force-installed PWAs (Linux only for now). Architecture is designed to grow to other browsers.
+> **Status: alpha.** Brave on Linux + macOS — keyboard shortcuts, general settings (vertical tabs, sidebar, NTP & toolbar declutter, …), and force-installed PWAs. Architecture is designed to grow to other browsers.
 
 ## Quick start
 
@@ -87,7 +87,7 @@ dotbrowser brave apply brave.toml -k           # apply, SIGKILL + restart Brave
 
 - **Shortcut keys**: Chromium [KeyEvent codes](https://www.w3.org/TR/uievents-code/) joined by `+` — `Control+Shift+KeyP`, `Alt+Digit1`, `F11`.
 - **Setting keys**: dotted paths into the profile `Preferences` JSON.
-- **PWA URLs**: every entry installs with `default_launch_container = "window"` (standalone PWA window) and `create_desktop_shortcut = true`. `[pwa]` is the only namespace that needs `sudo` (writes `/etc/brave/policies/managed/dotbrowser-pwa.json`) and is **Linux only** for now — macOS plist support is planned. If your config has no `[pwa]` table or no diff to apply, no sudo prompt happens.
+- **PWA URLs**: every entry installs with `default_launch_container = "window"` (standalone PWA window) and `create_desktop_shortcut = true`. `[pwa]` is the only namespace that needs `sudo`: it writes `/etc/brave/policies/managed/dotbrowser-pwa.json` on Linux, or `/Library/Managed Preferences/com.brave.Browser.plist` on macOS. If your config has no `[pwa]` table or no diff to apply, no sudo prompt happens.
 - **Empty `[settings]` header** (no entries) wipes everything dotbrowser previously managed in that namespace. **Missing header** = skip the namespace entirely. Same rule applies to `[shortcuts]` and `[pwa]`.
 
 ## CLI reference
@@ -162,7 +162,7 @@ dotbrowser brave settings dump brave.tabs.vertical_tabs_enabled bookmark_bar.sho
 
 ### `pwa dump` — emit currently-managed PWA URLs as TOML
 
-Reads the managed-policy file at `/etc/brave/policies/managed/dotbrowser-pwa.json` and prints a `[pwa]` table you can paste straight into your config. World-readable file → no sudo needed for `dump`.
+Reads the managed-policy file (`/etc/brave/policies/managed/dotbrowser-pwa.json` on Linux, `/Library/Managed Preferences/com.brave.Browser.plist` on macOS) and prints a `[pwa]` table you can paste straight into your config. Both files are world-readable → no sudo needed for `dump`.
 
 | Flag | What it does |
 |---|---|
@@ -176,14 +176,14 @@ dotbrowser brave pwa dump                      # what does dotbrowser have force
 
 `dotbrowser` patches Brave's profile `Preferences` JSON directly. It refuses to run while Brave is open (Brave overwrites the file on exit) — `-k` is the escape hatch: SIGKILL Brave, apply, restart. Each apply takes one timestamped backup, writes atomically (temp file + rename), and verifies the result by reloading.
 
-`[shortcuts]` and `[settings]` track managed entries per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores Brave's default on the next `apply`. `[pwa]` is different: its state lives in Chromium's managed-policy file at `/etc/brave/policies/managed/dotbrowser-pwa.json` (the policy file *is* the state — no sidecar). Brave reads that file at startup, fetches each URL's manifest, downloads icons, and emits a `.desktop` launcher; removing a URL from `[pwa]` and re-applying tells Brave to uninstall on next launch — same TOML-is-source-of-truth round-trip as the other namespaces.
+`[shortcuts]` and `[settings]` track managed entries per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores Brave's default on the next `apply`. `[pwa]` is different: its state lives in Chromium's managed-policy file (`/etc/brave/policies/managed/dotbrowser-pwa.json` on Linux, `/Library/Managed Preferences/com.brave.Browser.plist` on macOS — the policy file *is* the state, no sidecar). Brave reads that file at startup, fetches each URL's manifest, downloads icons, and emits a launcher (`.desktop` file on Linux, app shim on macOS); removing a URL from `[pwa]` and re-applying tells Brave to uninstall on next launch — same TOML-is-source-of-truth round-trip as the other namespaces.
 
 Default profile root: `~/.config/BraveSoftware/Brave-Browser` on Linux, `~/Library/Application Support/BraveSoftware/Brave-Browser` on macOS. Override with `-r/--profile-root`.
 
 ## Caveats
 
 - **Brave Sync** can overwrite `[settings]` entries on its next pulse if they fall in a synced category. UI-layout keys like `brave.tabs.vertical_tabs_*` are local-only and immune.
-- **Linux + macOS only** for `[shortcuts]`/`[settings]`. **`[pwa]` is Linux-only** for now (macOS uses a plist at `/Library/Managed Preferences/com.brave.Browser.plist` which the implementation doesn't yet handle). Windows needs a custom `--profile-root` and process-management path.
+- **Linux + macOS only.** Windows needs a custom `--profile-root`, process-management path, and registry-based `[pwa]` policy writes (`HKLM\Software\Policies\BraveSoftware\Brave\WebAppInstallForceList`).
 - **Brave only.** Chrome hardcodes shortcuts (no UI to customize), so this approach doesn't apply.
 - A handful of settings (`homepage`, default search engine, `pinned_tabs`, …) are integrity-protected and can't be patched yet — dotbrowser refuses them with a clear error rather than letting the change silently disappear on next launch. Set those via the Brave UI for now.
 - **`[pwa]` is force-install** (Chromium's enterprise `WebAppInstallForceList`). Apps installed this way appear in `chrome://apps` with an "Installed by your administrator" label and the right-click "Remove" option is hidden — to uninstall, delete the URL from `[pwa]` and re-apply, then dotbrowser/Brave does the rest. This is the right semantics for dotfile-style management (the TOML is the source of truth) but worth knowing if you also install PWAs by hand via the address-bar Install button.

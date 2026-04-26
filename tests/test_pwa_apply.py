@@ -1,22 +1,27 @@
 """End-to-end tests for `brave apply` exercising the [pwa] table.
 
 The pwa module is the first dotbrowser surface to (a) own state outside
-the user's profile (Brave's managed-policy file under /etc/) and
-(b) require sudo to apply. These tests bypass both: `POLICY_FILE` is
-redirected into the per-test `tmp_path`, and `_sudo_write_policy` /
+the user's profile (Brave's managed-policy file: `/etc/.../*.json` on
+Linux, `/Library/Managed Preferences/com.brave.Browser.plist` on macOS)
+and (b) require sudo to apply. These tests bypass both: `POLICY_FILE`
+is redirected into the per-test `tmp_path`, and `_sudo_write_policy` /
 the orchestrator's `sudo -v` preflight are replaced with no-sudo stubs.
 That isolation is what lets the suite run unattended in CI without ever
-touching real /etc/ or prompting for a password.
+touching real /etc/, /Library/, or prompting for a password.
 
-Linux-only for v1: macOS uses a plist at /Library/Managed Preferences/
-which the implementation does not yet handle. Tests are skipped (rather
-than xfail'd) on other platforms because there is genuinely no codepath
-to exercise yet.
+The fake `_sudo_write_policy` calls into the real `_build_policy_payload`
+so the platform-specific serialization (JSON on Linux, binary plist on
+macOS) is exercised live — only the privileged install step is faked.
+Linux/macOS path divergence has dedicated tests; everything else runs
+on both.
+
+Skipped on platforms outside Linux + macOS (Windows isn't wired up).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -27,9 +32,17 @@ from dotbrowser import brave as brave_pkg
 from dotbrowser.brave import pwa
 
 pytestmark = pytest.mark.skipif(
-    not sys.platform.startswith("linux"),
-    reason="pwa apply path is implemented for Linux only at this time",
+    not (sys.platform.startswith("linux") or sys.platform == "darwin"),
+    reason="pwa apply path is implemented for Linux + macOS",
 )
+
+
+def _read_policy_file(path: Path) -> dict:
+    """Parse the policy file using the right format for the current platform."""
+    if sys.platform == "darwin":
+        with path.open("rb") as f:
+            return plistlib.load(f)
+    return json.loads(path.read_text())
 
 
 @pytest.fixture
@@ -47,23 +60,30 @@ def fake_pwa_profile_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect /etc/brave/.../dotbrowser-pwa.json into tmp + neutralize sudo.
+    """Redirect the managed-policy file into tmp + neutralize sudo.
 
     Three monkeypatches together unlock the test:
     1. `pwa.POLICY_FILE` -> tmp path so `_read_current_policy()` finds
-       per-test state and read-back verification works.
-    2. `pwa._sudo_write_policy` -> direct write (no sudo, no /etc/),
-       which is the only place the module shells out for the apply.
+       per-test state and read-back verification works. The filename
+       mirrors the real per-platform layout (`.json` on Linux, `.plist`
+       on macOS) so tests look realistic when something fails.
+    2. `pwa._sudo_write_policy` -> direct write (no sudo), but it still
+       calls `_build_policy_payload` so the live serializer runs and any
+       platform-specific format bug is caught.
     3. `brave_pkg.subprocess.run` -> swallow the orchestrator's
        `sudo -v` preflight; everything else passes through.
     """
-    fake_path = tmp_path / "policy" / "dotbrowser-pwa.json"
+    if sys.platform == "darwin":
+        fake_path = tmp_path / "policy" / "com.brave.Browser.plist"
+    else:
+        fake_path = tmp_path / "policy" / "dotbrowser-pwa.json"
     monkeypatch.setattr(pwa, "POLICY_FILE", fake_path)
 
     def fake_sudo_write_policy(entries: list[dict]) -> None:
         fake_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {pwa.POLICY_KEY: entries}
-        fake_path.write_text(json.dumps(payload, indent=2) + "\n")
+        # Exercise the live platform-specific serializer, write its
+        # bytes directly. Skipping sudo is the *only* fake here.
+        fake_path.write_bytes(pwa._build_policy_payload(entries))
 
     monkeypatch.setattr(pwa, "_sudo_write_policy", fake_sudo_write_policy)
 
@@ -172,7 +192,7 @@ def test_first_apply_writes_policy_file(
     _apply(fake_pwa_profile_root, cfg)
 
     assert fake_policy.exists()
-    data = json.loads(fake_policy.read_text())
+    data = _read_policy_file(fake_policy)
     entries = data[pwa.POLICY_KEY]
     urls = sorted(e["url"] for e in entries)
     assert urls == ["https://app.element.io/", "https://squoosh.app/"]
@@ -222,7 +242,7 @@ def test_remove_url_uninstalls(
     cfg.write_text('[pwa]\nurls = ["https://squoosh.app/"]\n')
     _apply(fake_pwa_profile_root, cfg)
 
-    data = json.loads(fake_policy.read_text())
+    data = _read_policy_file(fake_policy)
     urls = [e["url"] for e in data[pwa.POLICY_KEY]]
     assert urls == ["https://squoosh.app/"]
 
@@ -247,7 +267,7 @@ def test_empty_pwa_table_wipes(
     _apply(fake_pwa_profile_root, cfg)
 
     assert fake_policy.exists()
-    data = json.loads(fake_policy.read_text())
+    data = _read_policy_file(fake_policy)
     assert data[pwa.POLICY_KEY] == []
 
 
@@ -354,3 +374,71 @@ def test_dump_first_run_shows_empty_list_with_note(
     assert "[pwa]" in out
     assert "urls = []" in out
     assert "no managed PWAs" in out
+
+
+# ---------------------------------------------------------------------------
+# macOS-specific: read-modify-write must preserve unrelated MDM keys
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="MDM-key preservation is a macOS-only concern (Linux file is namespaced)",
+)
+def test_macos_preserves_unrelated_mdm_keys(
+    fake_pwa_profile_root: Path,
+    fake_policy: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`/Library/Managed Preferences/com.brave.Browser.plist` is keyed
+    by Brave's bundle ID, so an MDM may already be writing other policy
+    keys to the same file. dotbrowser must round-trip without clobbering
+    them — only its own `WebAppInstallForceList` key gets touched.
+    """
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+
+    # Pre-seed the plist with an unrelated MDM-managed key. This is the
+    # state we'd find on a managed Mac whose admin already pushed e.g.
+    # `HomepageLocation` and `URLBlocklist` via a configuration profile.
+    fake_policy.parent.mkdir(parents=True, exist_ok=True)
+    seed = {
+        "HomepageLocation": "https://intranet.example.com/",
+        "URLBlocklist": ["example.com"],
+    }
+    with fake_policy.open("wb") as f:
+        plistlib.dump(seed, f, fmt=plistlib.FMT_BINARY)
+
+    cfg = tmp_path / "brave.toml"
+    cfg.write_text('[pwa]\nurls = ["https://squoosh.app/"]\n')
+    _apply(fake_pwa_profile_root, cfg)
+
+    data = _read_policy_file(fake_policy)
+    # Our key was written.
+    assert [e["url"] for e in data[pwa.POLICY_KEY]] == ["https://squoosh.app/"]
+    # Unrelated keys survived intact.
+    assert data["HomepageLocation"] == "https://intranet.example.com/"
+    assert data["URLBlocklist"] == ["example.com"]
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="binary plist format is only what the macOS path produces",
+)
+def test_macos_uses_binary_plist_format(
+    fake_pwa_profile_root: Path,
+    fake_policy: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sanity-check the on-disk format is binary plist, not XML or JSON.
+    Binary matches what `defaults` writes and is what tooling like
+    `plutil -p` expects without explicit format flags."""
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+
+    cfg = tmp_path / "brave.toml"
+    cfg.write_text('[pwa]\nurls = ["https://squoosh.app/"]\n')
+    _apply(fake_pwa_profile_root, cfg)
+
+    # Binary plist files start with the magic bytes "bplist00".
+    assert fake_policy.read_bytes().startswith(b"bplist00")
