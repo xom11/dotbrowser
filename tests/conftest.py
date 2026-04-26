@@ -47,6 +47,60 @@ def fake_settings_profile_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def fake_vivaldi_profile_root(tmp_path: Path) -> Path:
+    """Profile root for Vivaldi tests.
+
+    Mirrors the on-disk layout: a `Default/Preferences` JSON containing
+    `vivaldi.actions[0]` (the list-of-one-dict shape Vivaldi uses) with
+    a couple of seeded commands, and a separate MAC-tracked key so the
+    settings refusal path can be exercised here too.
+
+    `COMMAND_CLOSE_TAB` carries `gestures` alongside `shortcuts` so
+    tests can verify the apply path doesn't clobber the gestures field
+    when it rewrites shortcuts.
+    """
+    profile = tmp_path / "Default"
+    profile.mkdir()
+    prefs = {
+        "vivaldi": {
+            "actions": [
+                {
+                    "COMMAND_CLOSE_TAB": {
+                        "shortcuts": ["meta+w"],
+                        "gestures": ["20"],
+                    },
+                    "COMMAND_NEW_TAB": {
+                        "shortcuts": ["meta+t"],
+                    },
+                    "COMMAND_FOCUS_ADDRESSFIELD": {
+                        "shortcuts": ["meta+l"],
+                    },
+                    "COMMAND_TAB_NEXT": {
+                        "shortcuts": ["ctrl+tab"],
+                    },
+                },
+            ],
+            "tabs": {
+                "minimize": False,
+            },
+        },
+        "browser": {
+            "show_home_button": True,
+        },
+        "protection": {
+            "macs": {
+                "browser": {
+                    "show_home_button": "DEADBEEF" * 8,
+                },
+            },
+        },
+        "some": {"unrelated": "preference"},
+    }
+    (profile / "Preferences").write_text(json.dumps(prefs))
+    return tmp_path
+
+
+@pytest.fixture
 def fake_profile_root(tmp_path: Path) -> Path:
     """A directory that mimics Brave's profile-root layout: a `Default`
     sub-folder containing a minimal `Preferences` JSON.

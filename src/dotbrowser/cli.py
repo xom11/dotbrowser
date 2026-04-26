@@ -1,10 +1,11 @@
 """Top-level CLI for dotbrowser.
 
 Usage:
-    dotbrowser brave apply <config>          # writes [shortcuts] + [settings]
-    dotbrowser brave shortcuts dump
-    dotbrowser brave shortcuts list [filter]
-    dotbrowser brave settings dump [keys...]
+    dotbrowser brave   apply <config>        # writes [shortcuts] + [settings] + [pwa]
+    dotbrowser vivaldi apply <config>        # same, for Vivaldi
+    dotbrowser <browser> shortcuts dump|list
+    dotbrowser <browser> settings  dump [keys...]
+    dotbrowser <browser> pwa       dump
 
 New browser support is added by writing a `dotbrowser/<browser>/__init__.py`
 that exposes `register(subparsers)` to mount its subcommands.
@@ -15,6 +16,7 @@ import argparse
 
 from dotbrowser import __version__
 from dotbrowser.brave import register as register_brave
+from dotbrowser.vivaldi import register as register_vivaldi
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="browser", required=True, metavar="BROWSER")
     register_brave(sub)
+    register_vivaldi(sub)
     return parser
 
 
