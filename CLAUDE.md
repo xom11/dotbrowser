@@ -5,11 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run the CLI without installing (from repo root)
-PYTHONPATH=src python -m dotbrowser <args>
+# Install from PyPI (end-user)
+pip install dotbrowser
 
-# Or install editable then use the entry point
-pip install -e .
+# Or install editable from a clone (development)
+pip install -e ".[test]"
+
+# Run the CLI without installing the entry point (from repo root)
+PYTHONPATH=src python -m dotbrowser <args>
 
 # Apply both [shortcuts] and [settings] from a single TOML file
 dotbrowser brave apply examples/brave.toml
@@ -23,6 +26,15 @@ dotbrowser brave settings dump
 # (requires `gh` CLI authenticated)
 python scripts/generate_brave_command_ids.py
 ```
+
+## Releasing
+
+Tag-driven via `.github/workflows/release.yml`. Steps:
+
+1. Bump `version` in **both** `pyproject.toml` and `src/dotbrowser/__init__.py` (keep them in lockstep — there is no single source of truth yet, just two strings).
+2. Commit on `main`.
+3. Tag and push: `git tag v0.X.Y && git push && git push origin v0.X.Y`.
+4. The `Publish to PyPI` workflow fires on the tag, builds sdist + wheel, runs `twine check`, and uploads using the `PYPI_API_TOKEN` repo secret. The token is project-scoped to `dotbrowser`. PyPI versions are immutable — once `0.X.Y` is uploaded you cannot reuse it; bump to `0.X.Y+1` for any fix, even a typo.
 
 Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]"`). Run with `pytest` from the repo root. The suite has three layers:
 

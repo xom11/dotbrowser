@@ -1,6 +1,8 @@
 # dotbrowser
 
 [![CI](https://github.com/xom11/dotbrowser/actions/workflows/ci.yml/badge.svg)](https://github.com/xom11/dotbrowser/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/dotbrowser.svg)](https://pypi.org/project/dotbrowser/)
+[![Python](https://img.shields.io/pypi/pyversions/dotbrowser.svg)](https://pypi.org/project/dotbrowser/)
 
 Manage browser settings as dotfiles. Version-control your browser config and sync it across machines without depending on the browser's own sync service.
 
@@ -18,11 +20,27 @@ Chromium-based browsers don't expose most settings through a config file the way
 
 ## Install
 
+From PyPI (recommended):
+
 ```bash
-pip install -e .
+pip install dotbrowser
 ```
 
-Or run without installing:
+Or pin to a version:
+
+```bash
+pip install "dotbrowser>=0.2,<0.3"
+```
+
+Or install from source for development:
+
+```bash
+git clone https://github.com/xom11/dotbrowser
+cd dotbrowser
+pip install -e ".[test]"
+```
+
+Either way the entry point is the `dotbrowser` command. To run without installing the entry point:
 
 ```bash
 python -m dotbrowser brave shortcuts list
