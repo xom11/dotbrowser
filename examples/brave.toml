@@ -32,9 +32,12 @@ show_history = ["Control+KeyH", "Meta+KeyY"]
 "auto_pin_new_tab_groups"      = false
 "brave.location_bar_is_wide"   = false  # standard-width omnibox
 
-# Tabs
+# Tabs — vertical tabs in minimal (icon-only) mode.
+# `collapsed = true` is the "minimal" panel state: only favicons + close
+# buttons render; full titles appear on hover. Flip to `false` to keep
+# the expanded panel with titles always visible.
 "brave.tabs.vertical_tabs_enabled"   = true
-"brave.tabs.vertical_tabs_collapsed" = false
+"brave.tabs.vertical_tabs_collapsed" = true
 
 # Bookmarks bar + omnibox (verified non-MAC; safe to manage here)
 # "Show bookmarks bar" = Never (both flags false). Set show_on_all_tabs=true
