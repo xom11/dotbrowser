@@ -113,6 +113,14 @@ Different stack entirely. Firefox has no JSON `Preferences`; instead
 - [x] Unified `brave apply` for shortcuts + settings — commit `29b7465`
 - [x] CI on GitHub Actions (Linux + macOS, Python 3.11–3.13)
 - [x] Release-to-PyPI workflow on tag push
+- [x] Brave `[pwa]` — Linux force-install via Chromium policy
+  (commits `d1b1351`, `bd6f482`)
+- [x] Brave `[pwa]` — macOS via `/Library/Managed Preferences/
+  com.brave.Browser.plist` (binary plist, read-modify-write to
+  preserve unrelated MDM keys). Probed user-level path first; rejected
+  because `WebAppInstallForceList` is `scope: machine` and values
+  written via `defaults write com.brave.Browser` load as recommended,
+  not mandatory.
 
 ---
 

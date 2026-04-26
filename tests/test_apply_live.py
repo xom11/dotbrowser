@@ -177,12 +177,12 @@ def test_dump_and_list_against_fake_profile(fake_profile_root: Path) -> None:
 
 
 def test_apply_empty_config_errors(fake_profile_root: Path, tmp_path: Path) -> None:
-    """A TOML with neither [shortcuts] nor [settings] table is a usage
-    error — refuse rather than silently doing nothing, since the user
-    almost certainly meant to put one in."""
+    """A TOML with no recognized table is a usage error — refuse rather
+    than silently doing nothing, since the user almost certainly meant
+    to put one in."""
     cfg = tmp_path / "empty.toml"
     cfg.write_text("# nothing here\n")
 
     r = _run_cli(fake_profile_root, "apply", str(cfg))
     assert r.returncode != 0
-    assert "no [shortcuts] or [settings]" in (r.stdout + r.stderr)
+    assert "no [shortcuts], [settings] or [pwa]" in (r.stdout + r.stderr)
