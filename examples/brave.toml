@@ -13,9 +13,6 @@
 #   explicit "wipe my managed entries" gesture.
 
 [shortcuts]
-new_tab        = ["Control+KeyT"]
-close_tab      = ["Control+KeyW"]
-reload         = ["Control+KeyR"]
 toggle_sidebar = ["Control+Shift+KeyE"]
 toggle_ai_chat = ["Alt+KeyA"]
 focus_location = ["Control+KeyL", "Alt+KeyD"]
@@ -26,9 +23,44 @@ forward             = ["Alt+KeyL"]
 select_previous_tab = ["Alt+KeyJ"]
 select_next_tab     = ["Alt+KeyK"]
 
+# Ctrl+T trên cả 2 OS, macOS giữ thêm Cmd+T (Meta+) cho muscle memory.
+# Trên Linux Meta+KeyT = Super+T thường bị DE grab → no-op vô hại.
+new_tab      = ["Control+KeyT", "Meta+KeyT"]
+close_tab    = ["Control+KeyW", "Meta+KeyW"]
+reload       = ["Control+KeyR", "Meta+KeyR"]
+# show_history: macOS reserve Cmd+H cho "Hide Window" → dùng Cmd+Y (mac default).
+show_history = ["Control+KeyH", "Meta+KeyY"]
+
 [settings]
-# Brave-specific UI layout (these keys are NOT MAC-protected, so direct
-# patching is safe). Keys are dotted paths into Preferences.
+# --- Appearance ---------------------------------------------------------
+# "Use system title bar and borders" OFF → giữ custom chrome của Brave.
+"browser.custom_chrome_frame" = true
+
+# "Show tab groups in bookmarks" OFF.
+"bookmark_bar.show_tab_groups" = false
+
+# "Automatically pin new tab groups created on any device to bookmarks" OFF.
+"auto_pin_new_tab_groups" = false
+
+# "Use wide address bar" OFF — giữ omnibox chiều rộng tiêu chuẩn.
+"brave.location_bar_is_wide" = false
+
+# --- Tabs ---------------------------------------------------------------
 "brave.tabs.vertical_tabs_enabled"   = true
 "brave.tabs.vertical_tabs_collapsed" = false
-"bookmark_bar.show_tab_groups"       = true
+
+# --- Settings KHÔNG quản lý được trong v1 (MAC-protected) ---------------
+# Các toggle dưới đây có entry trong `protection.macs.*` của profile, nên
+# `dotbrowser brave apply` sẽ refuse nếu bạn thử thêm chúng vào đây:
+#   - "Show home button"               (browser.show_home_button)
+#   - "Show bookmarks bar"             (bookmark_bar.show_on_all_tabs +
+#                                        brave.always_show_bookmark_bar_on_ntp)
+#   - "Always show full URLs"          (omnibox.prevent_url_elisions, có thể MAC)
+#
+# MAC support sẽ được thêm ở v2 (cần Chromium seed + serialize byte-exact).
+#
+# --- Cách tự khám phá thêm key ------------------------------------------
+# Toggle setting bạn muốn manage trong UI Brave → đóng Brave → chạy
+#   dotbrowser brave settings dump <đoạn-bạn-đoán-key>
+# Hoặc grep file Preferences trực tiếp:
+#   grep -oE '"[^"]*"\s*:' ~/.config/BraveSoftware/Brave-Browser/Default/Preferences | sort -u
