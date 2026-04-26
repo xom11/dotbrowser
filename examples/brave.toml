@@ -6,24 +6,23 @@
 #   - empty body      → all previously-managed entries reset / popped.
 
 [shortcuts]
-toggle_sidebar = ["Control+Shift+KeyE"]
-toggle_ai_chat = ["Alt+KeyA"]
-focus_location = ["Control+KeyL", "Alt+KeyD"]
 
 # vim-style hjkl: Alt+H/L for history, Alt+J/K for tab switching.
-back                = ["Alt+KeyH"]
-forward             = ["Alt+KeyL"]
-select_previous_tab = ["Alt+KeyJ"]
-select_next_tab     = ["Alt+KeyK"]
+# Ctrl+arrows kept in parallel: Left/Right for history, Up/Down for tabs.
+back                = ["Alt+KeyH", "Control+ArrowLeft"]
+forward             = ["Alt+KeyL", "Control+ArrowRight"]
+select_previous_tab = ["Alt+KeyJ", "Control+ArrowUp"]
+select_next_tab     = ["Alt+KeyK", "Control+ArrowDown"]
 
-# Ctrl+T on both OSes; macOS also keeps Cmd+T (Meta+) for muscle memory.
-# On Linux Meta+KeyT = Super+T is usually grabbed by the DE — harmless no-op.
-new_tab   = ["Control+KeyT", "Meta+KeyT"]
-close_tab = ["Control+KeyW", "Meta+KeyW"]
-reload    = ["Control+KeyR", "Meta+KeyR"]
-
-# macOS reserves Cmd+H for "Hide Window" → use Cmd+Y (Brave's mac default).
-show_history = ["Control+KeyH", "Meta+KeyY"]
+# Ctrl-only bindings. On macOS, swap "Control+" → "Meta+" (Brave serializes
+# Cmd as Meta+ in the pref) if you want Cmd-key muscle memory.
+new_tab        = ["Control+KeyT"]
+close_tab      = ["Control+KeyW"]
+reload         = ["Control+KeyR"]
+focus_search   = ["Control+KeyS"]
+find           = ["Control+KeyF"]
+show_downloads = ["Control+KeyJ"]
+show_history   = ["Control+KeyH"]
 
 [settings]
 # Comments below name the Brave UI option each key controls; the value
