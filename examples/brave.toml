@@ -26,52 +26,60 @@ reload    = ["Control+KeyR", "Meta+KeyR"]
 show_history = ["Control+KeyH", "Meta+KeyY"]
 
 [settings]
+# Comments below name the Brave UI option each key controls; the value
+# (`true`/`false`) is the state we want.
+
 # Appearance
-"browser.custom_chrome_frame"  = true   # keep Brave's custom title bar
-"bookmark_bar.show_tab_groups" = false
-"auto_pin_new_tab_groups"      = false
-"brave.location_bar_is_wide"   = false  # standard-width omnibox
+"browser.custom_chrome_frame"  = true   # Use Brave's custom title bar (vs. system frame)
+"bookmark_bar.show_tab_groups" = false  # Show tab groups in the bookmarks bar
+"auto_pin_new_tab_groups"      = false  # Auto-pin new tab groups
+"brave.location_bar_is_wide"   = false  # Wide address bar (full window width vs. centered)
 
 # Tabs — vertical tabs in minimal (icon-only) mode.
 # `collapsed = true` is the "minimal" panel state: only favicons + close
 # buttons render; full titles appear on hover. Flip to `false` to keep
 # the expanded panel with titles always visible.
-"brave.tabs.vertical_tabs_enabled"   = true
-"brave.tabs.vertical_tabs_collapsed" = true
+"brave.tabs.vertical_tabs_enabled"   = true   # Use vertical tabs
+"brave.tabs.vertical_tabs_collapsed" = true   # Collapse the vertical-tabs panel to icons
 
-# Bookmarks bar + omnibox (verified non-MAC; safe to manage here)
+# Bookmarks bar + address bar.
 # "Show bookmarks bar" = Never (both flags false). Set show_on_all_tabs=true
 # alone for "Always", or show_on_all_tabs=false + on_ntp=true for "Only on NTP".
-"bookmark_bar.show_on_all_tabs"         = false  # never on regular tabs
-"brave.always_show_bookmark_bar_on_ntp" = false  # never on the new-tab page
-"omnibox.prevent_url_elisions"          = true   # always show full URLs
+"bookmark_bar.show_on_all_tabs"         = false  # Show bookmarks bar on all tabs
+"brave.always_show_bookmark_bar_on_ntp" = false  # Show bookmarks bar on the new tab page
+"omnibox.prevent_url_elisions"          = true   # Always show full URLs in the address bar
 
-# New Tab Page — declutter (all non-MAC, verified against brave-core source)
+# New Tab Page — declutter (verified against brave-core source).
 # Note: `brave.new_tab_page.hide_all_widgets` exists but is ignored by the
 # refresh NTP (the current default UI). Use the per-widget toggles below.
-"ntp.shortcust_visible"                            = false  # top-sites icon row (Chromium upstream typo, not ours)
-"brave.brave_search.show-ntp-search"               = false  # NTP search box
-"brave.brave_search.show-ntp-chat"                 = false  # NTP AI chat input
-"brave.new_tab_page.show_background_image"         = false  # artistic background
-"brave.new_tab_page.show_branded_background_image" = false  # sponsored background banner
-"brave.new_tab_page.show_clock"                    = false  # clock widget
-"brave.new_tab_page.show_stats"                    = false  # stats card (trackers blocked, bandwidth)
-"brave.new_tab_page.show_rewards"                  = false  # rewards card
-"brave.new_tab_page.show_brave_vpn"                = false  # vpn widget
-"brave.new_tab_page.show_together"                 = false  # brave talk widget
-"brave.new_tab_page.show_brave_news"               = false  # brave news cards (key still uses old "today" naming internally)
+"ntp.shortcust_visible"                            = false  # Top-sites shortcut row (key has Chromium upstream typo "shortcust")
+"brave.brave_search.show-ntp-search"               = false  # Brave Search box on the NTP
+"brave.brave_search.show-ntp-chat"                 = false  # Leo AI chat input on the NTP
+"brave.new_tab_page.show_background_image"         = false  # Artistic background image
+"brave.new_tab_page.show_branded_background_image" = false  # Sponsored background image
+"brave.new_tab_page.show_clock"                    = false  # Clock widget
+"brave.new_tab_page.show_stats"                    = false  # Brave Stats card (trackers blocked, bandwidth saved)
+"brave.new_tab_page.show_rewards"                  = false  # Brave Rewards card
+"brave.new_tab_page.show_brave_vpn"                = false  # Brave VPN widget
+"brave.new_tab_page.show_together"                 = false  # Brave Talk widget
+"brave.new_tab_page.show_brave_news"               = false  # Brave News feed (key uses old "today" naming internally)
 
-# Toolbar declutter — these buttons render on every page, including NTP, so
-# they look like NTP elements but are actually toolbar actions.
-"brave.wallet.show_wallet_icon_on_toolbar"               = false  # wallet icon
-"brave.ai_chat.show_toolbar_button"                      = false  # leo AI launcher icon
-"brave.rewards.show_brave_rewards_button_in_location_bar" = false # rewards icon (location bar)
-"brave.brave_vpn.show_button"                            = false  # vpn icon
-"brave.today.should_show_toolbar_button"                 = false  # brave news icon
+# Toolbar declutter — these buttons render on every page including the NTP,
+# so they look like NTP elements but are actually toolbar actions.
+"brave.wallet.show_wallet_icon_on_toolbar"                = false  # Brave Wallet button on the toolbar
+"brave.ai_chat.show_toolbar_button"                       = false  # Leo AI button on the toolbar
+"brave.rewards.show_brave_rewards_button_in_location_bar" = false  # Brave Rewards button in the address bar
+"brave.brave_vpn.show_button"                             = false  # Brave VPN button on the toolbar
+"brave.today.should_show_toolbar_button"                  = false  # Brave News button on the toolbar
 
-# Leo AI — fully out of the way (not just the toolbar button)
-"brave.ai_chat.context_menu_enabled"          = false  # no "Ask Leo" right-click items
-"brave.ai_chat.autocomplete_provider_enabled" = false  # no Leo entries in the omnibox
+# Leo AI — fully out of the way (not just the toolbar button).
+"brave.ai_chat.context_menu_enabled"          = false  # "Ask Leo" right-click context-menu items
+"brave.ai_chat.autocomplete_provider_enabled" = false  # Leo suggestions in the address bar autocomplete
+
+# System / window close behaviour — kill the chatty close-time prompts.
+"brave.enable_closing_last_tab"       = false  # Close window when closing the last tab
+"brave.enable_window_closing_confirm" = false  # "Warn me before closing window with multiple tabs" prompt
+"brave.show_fullscreen_reminder"      = false  # "Press Esc to exit full screen" reminder bubble
 
 # ---------------------------------------------------------------------------
 # Keys dotbrowser will REFUSE (MAC-protected — Chromium tracked prefs).
