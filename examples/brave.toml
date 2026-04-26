@@ -8,11 +8,10 @@
 [shortcuts]
 
 # vim-style hjkl: Alt+H/L for history, Alt+J/K for tab switching.
-# Ctrl+arrows kept in parallel: Left/Right for history, Up/Down for tabs.
-back                = ["Alt+KeyH", "Control+ArrowLeft"]
-forward             = ["Alt+KeyL", "Control+ArrowRight"]
-select_previous_tab = ["Alt+KeyJ", "Control+ArrowUp"]
-select_next_tab     = ["Alt+KeyK", "Control+ArrowDown"]
+back                = ["Alt+KeyH"]
+forward             = ["Alt+KeyL"]
+select_previous_tab = ["Alt+KeyK"]
+select_next_tab     = ["Alt+KeyJ"]
 
 # Ctrl-only bindings. On macOS, swap "Control+" → "Meta+" (Brave serializes
 # Cmd as Meta+ in the pref) if you want Cmd-key muscle memory.
