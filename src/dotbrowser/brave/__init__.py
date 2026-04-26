@@ -27,9 +27,12 @@ TOML semantics:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -76,6 +79,31 @@ def _load_toml(path: Path) -> dict:
         return tomllib.load(f)
 
 
+def _looks_like_url(value: object) -> bool:
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
+def _load_toml_from_url(url: str) -> dict:
+    """Fetch a TOML config over HTTP(S) and parse it.
+
+    Prints the URL, byte size, and SHA-256 of the fetched payload so
+    the user can verify exactly what's about to be applied (the same
+    config can change between fetches if it points at a moving branch).
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = resp.read()
+    except urllib.error.URLError as e:
+        sys.exit(f"error: failed to fetch {url}: {e.reason}")
+    print(f"source: {url}")
+    print(f"  size:   {len(data)} bytes")
+    print(f"  sha256: {hashlib.sha256(data).hexdigest()}")
+    try:
+        return tomllib.loads(data.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        sys.exit(f"error: failed to parse TOML from {url}: {e}")
+
+
 def _build_plans(prefs_path: Path, prefs: dict, doc: dict) -> list[Plan]:
     """Ask each module for a Plan. Missing tables = skip entirely.
 
@@ -100,7 +128,11 @@ def _build_plans(prefs_path: Path, prefs: dict, doc: dict) -> list[Plan]:
 
 def cmd_apply(args: argparse.Namespace) -> None:
     prefs_path = find_preferences(args.profile_root, args.profile)
-    doc = _load_toml(args.config)
+    src = args.config
+    if _looks_like_url(src):
+        doc = _load_toml_from_url(str(src))
+    else:
+        doc = _load_toml(Path(src))
     if not isinstance(doc, dict):
         sys.exit("error: TOML root must be a table")
 
@@ -199,7 +231,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "apply",
         help="apply [shortcuts] and [settings] tables from a TOML config",
     )
-    a.add_argument("config", type=Path)
+    a.add_argument(
+        "config",
+        help="path to a local TOML file, or http(s):// URL to fetch one",
+    )
     a.add_argument("-n", "--dry-run", action="store_true")
     a.add_argument(
         "-k",

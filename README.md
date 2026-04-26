@@ -14,12 +14,23 @@ The repo ships an opinionated [`examples/brave.toml`](examples/brave.toml): vert
 
 ![Brave with the minimal config — empty new tab page, vertical tabs collapsed to icons, decluttered toolbar](docs/img/minimal-brave.png)
 
-No clone, no install — fetch the config straight from GitHub and apply with `uvx`:
+No clone, no install — `apply` accepts a URL directly. Fetched payloads are echoed with byte size + SHA-256 so you can see exactly what's being applied:
+
+```bash
+uvx dotbrowser brave apply --dry-run \
+  https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+
+# Apply (SIGKILLs Brave + restarts)
+uvx dotbrowser brave apply -k \
+  https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+```
+
+Prefer to inspect / customise locally first? Download then apply:
 
 ```bash
 curl -fsSL -o brave.toml https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
-uvx dotbrowser brave apply brave.toml --dry-run    # preview the diff
-uvx dotbrowser brave apply brave.toml -k           # apply — SIGKILLs Brave + restarts
+# edit brave.toml ...
+uvx dotbrowser brave apply brave.toml -k
 ```
 
 Anything you later remove from `brave.toml` reverts to Brave's default on the next `apply` — no orphan entries.
@@ -69,18 +80,74 @@ dotbrowser brave apply brave.toml -k           # apply, SIGKILL + restart Brave
 - **Setting keys**: dotted paths into the profile `Preferences` JSON.
 - **Empty `[settings]` header** (no entries) wipes everything dotbrowser previously managed in that namespace. **Missing header** = skip the namespace entirely.
 
-### Inspect
+## CLI reference
+
+Shape: `dotbrowser <browser> [browser-flags] <action> [action-flags] [args]`.
+
+### Browser-level flags (`dotbrowser brave …`)
+
+These apply to **every** action under `brave` and go *before* the action name.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `-r, --profile-root PATH` | Linux: `~/.config/BraveSoftware/Brave-Browser` <br> macOS: `~/Library/Application Support/BraveSoftware/Brave-Browser` | Brave's root profile directory. Required on Windows / unsupported platforms. |
+| `-p, --profile NAME` | `Default` | Profile directory name inside the root — e.g. `"Profile 1"`, `Default`. |
 
 ```bash
-dotbrowser brave shortcuts dump                                  # what am I currently overriding?
-dotbrowser brave shortcuts list toggle                           # search command names
-dotbrowser brave settings dump brave.tabs.vertical_tabs_enabled  # current value(s) of a setting
+# Apply on a non-default profile, with an alternate root.
+dotbrowser brave -r /custom/path -p "Profile 1" apply brave.toml
 ```
 
-### Multiple profiles
+### `apply <config>` — write `[shortcuts]` + `[settings]`
+
+`<config>` is a local TOML file path **or** an `http://`/`https://` URL. URLs are fetched in-memory; the URL, byte size, and SHA-256 are printed before the diff so you can verify exactly what's about to be applied.
+
+| Flag | What it does |
+|---|---|
+| `-n, --dry-run` | Compute + print the diff. Do not back up, write, or touch state files. |
+| `-k, --kill-browser` | If Brave is running, `SIGKILL` it, apply, then restart via the OS-correct launcher (`brave-browser` wrapper on Linux, `open -a "Brave Browser"` on macOS). Without this flag, dotbrowser refuses to run while Brave is open. |
 
 ```bash
-dotbrowser brave -p "Profile 1" apply brave.toml
+dotbrowser brave apply brave.toml --dry-run
+dotbrowser brave apply brave.toml -k
+dotbrowser brave apply -k https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+```
+
+### `shortcuts dump` — emit current shortcuts as TOML
+
+By default, only user-customised bindings are emitted (a useful starting point for your own config).
+
+| Flag | What it does |
+|---|---|
+| `-a, --all` | Dump every binding, including Brave's compiled-in defaults. |
+| `-o, --output FILE` | Write to FILE instead of stdout. |
+
+```bash
+dotbrowser brave shortcuts dump                       # what am I overriding?
+dotbrowser brave shortcuts dump -a -o all-binds.toml  # full reference dump
+```
+
+### `shortcuts list [filter]` — search known command names
+
+Lists every command id you can bind to. The optional positional `filter` is a substring match.
+
+```bash
+dotbrowser brave shortcuts list toggle   # everything containing "toggle"
+dotbrowser brave shortcuts list          # full list
+```
+
+### `settings dump [keys ...]` — inspect setting values
+
+- **No keys** → dumps every setting dotbrowser is currently managing on this profile.
+- **Explicit keys** → dumps those dotted paths. Missing keys appear as commented-out lines so you know dotbrowser looked.
+
+| Flag | What it does |
+|---|---|
+| `-o, --output FILE` | Write to FILE instead of stdout. |
+
+```bash
+dotbrowser brave settings dump
+dotbrowser brave settings dump brave.tabs.vertical_tabs_enabled bookmark_bar.show_on_all_tabs
 ```
 
 ## How it works
