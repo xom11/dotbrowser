@@ -209,3 +209,10 @@ Open items live in [TODO.md](TODO.md): expanded settings coverage (homepage / de
 ## License
 
 MIT
+
+
+---
+
+## Auto-generated contribution
+
+Added by bounty bot.
