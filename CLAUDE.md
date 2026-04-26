@@ -17,7 +17,13 @@ dotbrowser brave shortcuts list
 python scripts/generate_brave_command_ids.py
 ```
 
-There is no test suite, linter, or CI yet. When adding tests, prefer `pytest` and place under `tests/`.
+Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]"`). Run with `pytest` from the repo root. The suite has three layers:
+
+- `test_logic.py` / `test_platform.py` — pure-logic unit tests, run anywhere.
+- `test_smoke.py` — invokes the CLI as a subprocess against the real on-disk Brave profile (read-only `list`/`dump`/`apply --dry-run`). Skipped if no profile is found.
+- `test_apply_live.py` — synthesizes a fake `Preferences` in a tmp dir and runs the full apply/reset round-trip. Runs anywhere.
+
+The `--kill-brave` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
 ## Architecture
 
@@ -41,11 +47,12 @@ This is the load-bearing knowledge for `brave/shortcuts.py`:
 
 2. **Why direct JSON patching is safe.** `brave.accelerators` is a `RegisterDictionaryPref` in regular `Preferences`, not in `Secure Preferences` — it has no HMAC integrity check. Verified against `brave/components/commands/browser/accelerator_pref_manager.cc` upstream. Do not move logic to keys that ARE in `Secure Preferences` without first solving the MAC problem.
 
-3. **Why Brave must be closed.** Brave rewrites `Preferences` on exit from its in-memory `PrefService` (and on periodic flushes). Writing while Brave runs gets clobbered. `brave_running()` enforces this. The `--kill-brave` flag is the escape hatch: it captures Brave's main-process cmdline from `/proc/PID/cmdline`, SIGKILLs Brave (so it can't flush over our changes), applies, then restarts via the `brave-browser` wrapper script (preferred for `CHROME_WRAPPER`/xdg env setup) with the captured args.
+3. **Why Brave must be closed.** Brave rewrites `Preferences` on exit from its in-memory `PrefService` (and on periodic flushes). Writing while Brave runs gets clobbered. `brave_running()` enforces this. The `--kill-brave` flag is the escape hatch: it captures Brave's main-process cmdline, SIGKILLs Brave (so it can't flush over our changes), applies, then relaunches it.
 
-   Two robustness notes for `--kill-brave`:
-   - Chromium subprocesses overwrite their argv region (setproctitle-style), losing the null separators in `/proc/PID/cmdline`. `_read_cmdline` falls back to `shlex.split` when only one element comes back. The "main" Brave process is the one without a `--type=...` arg.
-   - `restart_brave` prefers `shutil.which("brave-browser")` over the captured argv[0] because the captured path is the inner binary (`/opt/brave.com/brave/brave`); launching that directly bypasses the wrapper's `CHROME_WRAPPER`/`PATH` setup and silently breaks default-browser registration and URL handlers.
+   Robustness notes for `--kill-brave`:
+   - **Process detection is platform-specific.** `_brave_proc_name()` returns `"brave"` on Linux and `"Brave Browser"` (with a space) on macOS — that's the literal basename `pgrep -x` matches. On macOS, helper processes have different basenames (`Brave Browser Helper`, `Brave Browser Helper (GPU)`, ...) so `pgrep -x` already excludes them; on Linux they're all `brave` so the `--type=...` arg filter in `find_main_brave_cmdline` is what isolates the main process.
+   - **Reading argv is platform-specific.** Linux: `/proc/<pid>/cmdline`. Chromium subprocesses overwrite their argv region (setproctitle-style), losing null separators — fall back to `shlex.split`. macOS has no `/proc`, so `_read_cmdline` shells out to `ps -o command= -p <pid>` and shlex-splits the result.
+   - **Restart is platform-specific.** Linux: prefer `shutil.which("brave-browser")` over the captured argv[0] because the captured path is the inner binary (`/opt/brave.com/brave/brave`); launching that directly bypasses the wrapper's `CHROME_WRAPPER`/`PATH` setup and silently breaks default-browser registration and URL handlers. macOS: launch via `open -a "Brave Browser" --args ...` so Launch Services starts the .app bundle properly (re-registers URL handlers, restores dock state).
 
 4. **Sidecar state file.** Brave's pref system garbage-collects unknown keys on launch, so we cannot store our "which IDs did dotbrowser write" record inside `Preferences`. Instead, `_state_file()` writes `<Preferences>.dotbrowser.shortcuts.json` next to it. This is what makes "remove a key from config → reset to default on next apply" work.
 
@@ -62,5 +69,5 @@ The brave-core source contains the comment "PLEASE DO NOT CHANGE THE VALUE OF EX
 ## Constraints
 
 - **Python 3.11+** required (uses stdlib `tomllib`). Code has a `tomli` fallback path but `requires-python = ">=3.11"` in pyproject.toml — keep these in sync.
-- **Linux paths only** in `DEFAULT_PROFILE_ROOT`. macOS/Windows support means adding platform branching; do not assume the existing path on other OSes.
+- **Linux + macOS** are supported in `DEFAULT_PROFILE_ROOT` (chosen via `sys.platform` in `brave/__init__.py::_default_profile_root`). For Windows, `--profile-root` is required at the CLI; the helper returns `None` for unknown platforms so `--help` still works without crashing at import.
 - **No runtime deps**. Stdlib only. Adding a dependency is a deliberate decision — prefer a stdlib solution first.

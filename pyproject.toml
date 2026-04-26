@@ -16,11 +16,15 @@ classifiers = [
     "Environment :: Console",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
 
 [project.scripts]
 dotbrowser = "dotbrowser.cli:main"

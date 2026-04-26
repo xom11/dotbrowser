@@ -63,7 +63,14 @@ dotbrowser brave --profile "Profile 1" shortcuts apply config.toml
 
 ## How it works
 
-Brave stores accelerators in `~/.config/BraveSoftware/Brave-Browser/<profile>/Preferences` under the JSON key `brave.accelerators`. This is **regular** preferences (not `Secure Preferences`), so it has no MAC integrity check — direct editing works.
+Brave stores accelerators in its profile `Preferences` JSON under the key `brave.accelerators`. This is **regular** preferences (not `Secure Preferences`), so it has no MAC integrity check — direct editing works.
+
+Default profile root per platform:
+
+| Platform | Path |
+|---|---|
+| Linux | `~/.config/BraveSoftware/Brave-Browser` |
+| macOS | `~/Library/Application Support/BraveSoftware/Brave-Browser` |
 
 `dotbrowser`:
 
@@ -76,7 +83,7 @@ Brave stores accelerators in `~/.config/BraveSoftware/Brave-Browser/<profile>/Pr
 
 ## Caveats
 
-- **Linux paths only** so far. macOS/Windows would need different `--profile-root` defaults.
+- **Linux + macOS** are supported. Windows would need a different `--profile-root` default (`%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data`) and process-management code path.
 - Command-ID mapping is auto-generated. If Brave/Chromium adds new commands you want to bind, regenerate:
   ```bash
   python scripts/generate_brave_command_ids.py
@@ -86,7 +93,8 @@ Brave stores accelerators in `~/.config/BraveSoftware/Brave-Browser/<profile>/Pr
 ## Roadmap
 
 - [ ] More Brave config domains (flags, search engines, theme, startup tabs)
-- [ ] macOS / Windows profile-root defaults
+- [x] macOS profile-root default
+- [ ] Windows profile-root default
 - [ ] Other browsers (Vivaldi, Edge, Arc, ...) — same Chromium pref system
 - [ ] Firefox via `user.js` generation
 
