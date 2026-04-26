@@ -22,6 +22,8 @@ focus_search   = ["Control+KeyS"]
 find           = ["Control+KeyF"]
 show_downloads = ["Control+KeyJ"]
 show_history   = ["Control+KeyH"]
+bookmark_this_tab = ["Control+KeyD"]
+focus_location    = ["Control+KeyL"]
 
 [settings]
 # Comments below name the Brave UI option each key controls; the value
