@@ -1,9 +1,10 @@
 """Top-level CLI for dotbrowser.
 
 Usage:
-    dotbrowser brave shortcuts apply <config>
+    dotbrowser brave apply <config>          # writes [shortcuts] + [settings]
     dotbrowser brave shortcuts dump
     dotbrowser brave shortcuts list [filter]
+    dotbrowser brave settings dump [keys...]
 
 New browser support is added by writing a `dotbrowser/<browser>/__init__.py`
 that exposes `register(subparsers)` to mount its subcommands.

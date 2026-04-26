@@ -1,0 +1,34 @@
+# Unified config for `dotbrowser brave apply`.
+#
+# This single file replaces the split brave.shortcuts.toml +
+# brave.settings.toml workflow: one apply command, one kill-brave +
+# backup + write cycle.
+#
+# Semantics for omitting a table:
+# - Header missing entirely (no `[shortcuts]` line) → that module is
+#   skipped, its previously-managed entries left alone. Safe default
+#   when you only want to manage the other namespace.
+# - Header present but body empty (`[settings]` followed by nothing)
+#   → all previously-managed entries are reset / popped. This is the
+#   explicit "wipe my managed entries" gesture.
+
+[shortcuts]
+new_tab        = ["Control+KeyT"]
+close_tab      = ["Control+KeyW"]
+reload         = ["Control+KeyR"]
+toggle_sidebar = ["Control+Shift+KeyE"]
+toggle_ai_chat = ["Alt+KeyA"]
+focus_location = ["Control+KeyL", "Alt+KeyD"]
+
+# vim-style hjkl: Alt+H/L cho lịch sử, Alt+J/K cho tab.
+back                = ["Alt+KeyH"]
+forward             = ["Alt+KeyL"]
+select_previous_tab = ["Alt+KeyJ"]
+select_next_tab     = ["Alt+KeyK"]
+
+[settings]
+# Brave-specific UI layout (these keys are NOT MAC-protected, so direct
+# patching is safe). Keys are dotted paths into Preferences.
+"brave.tabs.vertical_tabs_enabled"   = true
+"brave.tabs.vertical_tabs_collapsed" = false
+"bookmark_bar.show_tab_groups"       = true

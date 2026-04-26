@@ -1,10 +1,12 @@
-"""End-to-end test for `shortcuts apply` against a synthesized profile.
+"""End-to-end test for the unified `brave apply` against a synthesized profile.
 
 Builds a fake `Default/Preferences` in a tmp dir and exercises the full
-apply/reset round-trip. To stay independent of the user's running Brave
-session, the actual write path is driven in-process via `cmd_apply`
-with `brave_running` monkeypatched to False — only the dry-run and
-error-path checks go through the CLI subprocess.
+apply/reset round-trip via the unified entry point in
+`dotbrowser.brave.cmd_apply`. The TOML file used here only carries a
+`[shortcuts]` table, so the settings module is a no-op (missing-table
+= skip). To stay independent of the user's running Brave session, the
+in-process apply path runs with `brave_running` monkeypatched to False;
+only the dry-run + error-path checks go through the CLI subprocess.
 """
 from __future__ import annotations
 
@@ -15,14 +17,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-from dotbrowser.brave import shortcuts as sc
+from dotbrowser import brave as brave_pkg
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _run_cli(profile_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(profile_root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     return subprocess.run(
@@ -33,8 +33,7 @@ def _run_cli(profile_root: Path, *args: str) -> subprocess.CompletedProcess[str]
             "brave",
             "--profile-root",
             str(profile_root),
-            "shortcuts",
-            *args,
+            *extra,
         ],
         capture_output=True,
         text=True,
@@ -56,7 +55,7 @@ def _accelerators(profile_root: Path) -> dict[str, list[str]]:
 
 
 def _apply(profile_root: Path, config: Path, *, kill_brave: bool = False) -> None:
-    """Drive cmd_apply in-process with a fake argparse Namespace."""
+    """Drive the unified cmd_apply in-process with a fake Namespace."""
     args = argparse.Namespace(
         profile_root=profile_root,
         profile="Default",
@@ -64,7 +63,7 @@ def _apply(profile_root: Path, config: Path, *, kill_brave: bool = False) -> Non
         dry_run=False,
         kill_brave=kill_brave,
     )
-    sc.cmd_apply(args)
+    brave_pkg.cmd_apply(args)
 
 
 def test_apply_writes_then_resets(
@@ -75,7 +74,7 @@ def test_apply_writes_then_resets(
 
     # Stub the Brave-is-running check; we're operating on a tmp profile
     # that has nothing to do with the real running Brave instance.
-    monkeypatch.setattr(sc, "brave_running", lambda: False)
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
 
     cfg = tmp_path / "shortcuts.toml"
 
@@ -158,20 +157,32 @@ def test_apply_unknown_command_errors(fake_profile_root: Path, tmp_path: Path) -
 
 def test_dump_and_list_against_fake_profile(fake_profile_root: Path) -> None:
     """`list` is static; `dump` reads the fake profile's accelerators."""
-    r = _run_cli(fake_profile_root, "list", "focus")
+    r = _run_cli(fake_profile_root, "shortcuts", "list", "focus")
     assert r.returncode == 0
     assert "focus_location" in r.stdout
 
     # `dump` (no --all) only emits user-overridden entries; the fixture
     # has focus_location overridden but new_tab matching default.
-    r = _run_cli(fake_profile_root, "dump")
+    r = _run_cli(fake_profile_root, "shortcuts", "dump")
     assert r.returncode == 0
     assert "focus_location" in r.stdout
     # new_tab matches default in the fixture, so it should NOT appear
     assert "new_tab" not in r.stdout
 
     # `dump --all` should include every binding in accelerators
-    r = _run_cli(fake_profile_root, "dump", "--all")
+    r = _run_cli(fake_profile_root, "shortcuts", "dump", "--all")
     assert r.returncode == 0
     assert "focus_location" in r.stdout
     assert "new_tab" in r.stdout
+
+
+def test_apply_empty_config_errors(fake_profile_root: Path, tmp_path: Path) -> None:
+    """A TOML with neither [shortcuts] nor [settings] table is a usage
+    error — refuse rather than silently doing nothing, since the user
+    almost certainly meant to put one in."""
+    cfg = tmp_path / "empty.toml"
+    cfg.write_text("# nothing here\n")
+
+    r = _run_cli(fake_profile_root, "apply", str(cfg))
+    assert r.returncode != 0
+    assert "no [shortcuts] or [settings]" in (r.stdout + r.stderr)

@@ -14,7 +14,35 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
+
+
+@dataclass
+class Plan:
+    """An applied-or-dry-run-able set of changes from one module.
+
+    Each module's `plan_apply` returns one of these. The unified
+    `brave apply` orchestrator collects plans from every module that
+    has a corresponding TOML table, prints their diffs, and (if not
+    dry-run) runs all `apply_fn`s against a single in-memory `Preferences`
+    dict before a single `write_atomic`. State sidecars are written
+    afterwards, and `verify_fn`s run against the reloaded prefs.
+
+    `diff_lines` empty ⇔ this module has nothing to do for this config.
+    """
+
+    namespace: str  # e.g. "shortcuts" or "settings" — used as a section header
+    diff_lines: list[str]
+    state_path: Path
+    state_payload: dict[str, Any]
+    apply_fn: Callable[[dict], None]
+    verify_fn: Callable[[dict], None]
+
+    @property
+    def empty(self) -> bool:
+        return not self.diff_lines
 
 
 def find_preferences(profile_root: Path, profile: str) -> Path:

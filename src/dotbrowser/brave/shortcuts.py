@@ -4,42 +4,34 @@ Brave stores user-overridden accelerators in its profile `Preferences` JSON
 under the `brave.accelerators` key. The values are NOT in the protected
 `Secure Preferences` file, so direct patching does not trip MAC integrity
 checks (verified against brave/brave-core source).
+
+This module exposes:
+- `plan_apply(prefs_path, prefs, raw_table)` — pure: builds a `Plan` from
+  a parsed `[shortcuts]` table. Used by the unified `brave apply` runner.
+- CLI sub-actions `dump` and `list` (read-only). Apply lives at the
+  `brave` level (one entry point for shortcuts + settings together).
 """
 from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib  # type: ignore[no-redef]
 
 from dotbrowser.brave.command_ids import ID_TO_NAME, NAME_TO_ID
 from dotbrowser.brave.utils import (
-    _brave_pids,
-    brave_running,
-    find_main_brave_cmdline,
+    Plan,
     find_preferences,
     get_nested,
-    kill_brave_and_wait,
     load_prefs,
-    restart_brave,
-    write_atomic,
 )
 
 ACCELERATORS_KEY_PATH = ("brave", "accelerators")
 DEFAULT_ACCELERATORS_KEY_PATH = ("brave", "default_accelerators")
+NAMESPACE = "shortcuts"
 
 
-def load_config(path: Path) -> dict[str, list[str]]:
-    with path.open("rb") as f:
-        data = tomllib.load(f)
-    raw = data.get("shortcuts", {})
+def _validate_table(raw: object) -> dict[str, list[str]]:
     if not isinstance(raw, dict):
         sys.exit("error: [shortcuts] must be a table")
     out: dict[str, list[str]] = {}
@@ -98,17 +90,16 @@ def _get_managed_ids(prefs_path: Path) -> set[str]:
     return set(data.get("managed_ids", []))
 
 
-def _set_managed_ids(prefs_path: Path, ids: set[str]) -> None:
-    state = _state_file(prefs_path)
-    state.write_text(json.dumps({"managed_ids": sorted(ids, key=int)}, indent=2))
+def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
+    """Compute the apply plan for a `[shortcuts]` TOML table.
 
-
-def cmd_apply(args: argparse.Namespace) -> None:
-    prefs_path = find_preferences(args.profile_root, args.profile)
-    config = load_config(args.config)
+    Pure: validates input, reads the state file, and returns a `Plan`.
+    Does not write anything. Caller (the unified runner) is responsible
+    for backups, kill-brave, write_atomic, state-file write, and verify.
+    """
+    config = _validate_table(raw_table)
     target = resolve_command_ids(config)
 
-    prefs = load_prefs(prefs_path)
     current = dict(get_nested(prefs, ACCELERATORS_KEY_PATH))
     defaults = dict(get_nested(prefs, DEFAULT_ACCELERATORS_KEY_PATH))
 
@@ -117,61 +108,31 @@ def cmd_apply(args: argparse.Namespace) -> None:
     removed_ids = {cid for cid in (config_managed_ids - target_ids) if cid in current}
 
     diff = diff_summary(current, target, removed_ids)
-    if not diff:
-        print("no changes — Preferences already match config")
-        return
 
-    print(f"target: {prefs_path}")
-    print("changes:")
-    print("\n".join(diff))
+    def apply_fn(prefs: dict) -> None:
+        accels = get_nested(prefs, ACCELERATORS_KEY_PATH)
+        for cid, keys in target.items():
+            accels[cid] = keys
+        for cid in removed_ids:
+            if cid in defaults:
+                accels[cid] = list(defaults[cid])
+            else:
+                accels.pop(cid, None)
 
-    if args.dry_run:
-        print("\n(dry-run, nothing written)")
-        return
+    def verify_fn(reloaded: dict) -> None:
+        reloaded_accels = get_nested(reloaded, ACCELERATORS_KEY_PATH)
+        for cid, keys in target.items():
+            if reloaded_accels.get(cid) != keys:
+                sys.exit(f"error: shortcuts verification failed for command {cid}")
 
-    saved_cmdline: list[str] | None = None
-    if brave_running():
-        if not args.kill_brave:
-            sys.exit(
-                "error: Brave is running. Close it first, or pass --kill-brave\n"
-                "(Brave caches prefs in memory and overwrites the file on exit,\n"
-                "so editing while running is unreliable. --kill-brave SIGKILLs\n"
-                "Brave to prevent the flush, applies, then restarts it.)"
-            )
-        saved_cmdline = find_main_brave_cmdline()
-        pids = _brave_pids()
-        print(f"killing Brave (pids: {' '.join(pids)})")
-        kill_brave_and_wait()
-
-    backup = prefs_path.with_suffix(
-        prefs_path.suffix + f".bak.{datetime.now():%Y%m%d-%H%M%S}"
+    return Plan(
+        namespace=NAMESPACE,
+        diff_lines=diff,
+        state_path=_state_file(prefs_path),
+        state_payload={"managed_ids": sorted(target_ids, key=int)},
+        apply_fn=apply_fn,
+        verify_fn=verify_fn,
     )
-    shutil.copy2(prefs_path, backup)
-    print(f"backup: {backup}")
-
-    accels = get_nested(prefs, ACCELERATORS_KEY_PATH)
-    for cid, keys in target.items():
-        accels[cid] = keys
-    for cid in removed_ids:
-        if cid in defaults:
-            accels[cid] = list(defaults[cid])
-        else:
-            accels.pop(cid, None)
-    write_atomic(prefs_path, prefs)
-    _set_managed_ids(prefs_path, target_ids)
-
-    reloaded = load_prefs(prefs_path)
-    reloaded_accels = get_nested(reloaded, ACCELERATORS_KEY_PATH)
-    for cid, keys in target.items():
-        if reloaded_accels.get(cid) != keys:
-            sys.exit(f"error: verification failed for command {cid}")
-    print("ok — applied and verified")
-
-    if saved_cmdline:
-        used = restart_brave(saved_cmdline)
-        print(f"restarting Brave: {' '.join(used)}")
-    elif args.kill_brave:
-        print("Brave killed; could not capture original command line — restart manually.")
 
 
 def cmd_dump(args: argparse.Namespace) -> None:
@@ -220,19 +181,8 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser("shortcuts", help="manage keyboard shortcuts")
+    p = subparsers.add_parser("shortcuts", help="inspect keyboard shortcuts (apply lives at `brave apply`)")
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
-
-    a = sub.add_parser("apply", help="patch Preferences from a TOML config")
-    a.add_argument("config", type=Path)
-    a.add_argument("--dry-run", action="store_true")
-    a.add_argument(
-        "--kill-brave",
-        action="store_true",
-        help="if Brave is running, SIGKILL it (so it can't flush in-memory "
-        "prefs over our changes), apply, then restart it",
-    )
-    a.set_defaults(func=cmd_apply)
 
     d = sub.add_parser("dump", help="emit current shortcuts as TOML")
     d.add_argument("-o", "--output", help="write to file instead of stdout")

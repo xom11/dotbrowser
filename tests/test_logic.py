@@ -1,50 +1,42 @@
 """Pure-logic tests — no Brave process, no real profile, no subprocess."""
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 
 import pytest
 
+from dotbrowser.brave import settings as st
 from dotbrowser.brave import shortcuts as sc
+from dotbrowser.brave import utils as ut
 
 
 # ---------------------------------------------------------------------------
-# load_config
+# shortcuts._validate_table  (was load_config; TOML loading now happens at
+# the unified-apply level, modules just validate the parsed table)
 # ---------------------------------------------------------------------------
 
-def test_load_config_valid(tmp_path: Path) -> None:
-    cfg = tmp_path / "c.toml"
-    cfg.write_text(
-        '[shortcuts]\n'
-        'focus_location = ["Control+KeyL", "Alt+KeyD"]\n'
-        'new_tab = ["Control+KeyT"]\n'
-    )
-    assert sc.load_config(cfg) == {
+def test_validate_table_valid() -> None:
+    raw = {
         "focus_location": ["Control+KeyL", "Alt+KeyD"],
         "new_tab": ["Control+KeyT"],
     }
+    assert sc._validate_table(raw) == raw
 
 
-def test_load_config_missing_table_returns_empty(tmp_path: Path) -> None:
-    cfg = tmp_path / "c.toml"
-    cfg.write_text("# nothing here\n")
-    assert sc.load_config(cfg) == {}
-
-
-def test_load_config_rejects_non_string_values(tmp_path: Path) -> None:
-    cfg = tmp_path / "c.toml"
-    cfg.write_text('[shortcuts]\nfocus_location = "Control+KeyL"\n')
-    with pytest.raises(SystemExit, match="must be a list of strings"):
-        sc.load_config(cfg)
-
-
-def test_load_config_rejects_non_table_root(tmp_path: Path) -> None:
-    cfg = tmp_path / "c.toml"
-    cfg.write_text("shortcuts = []\n")
+def test_validate_table_rejects_non_dict() -> None:
     with pytest.raises(SystemExit, match=r"\[shortcuts\] must be a table"):
-        sc.load_config(cfg)
+        sc._validate_table([])
+
+
+def test_validate_table_rejects_non_list_value() -> None:
+    with pytest.raises(SystemExit, match="must be a list of strings"):
+        sc._validate_table({"focus_location": "Control+KeyL"})
+
+
+def test_validate_table_rejects_non_string_in_list() -> None:
+    with pytest.raises(SystemExit, match="must be a list of strings"):
+        sc._validate_table({"focus_location": ["Control+KeyL", 42]})
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +57,7 @@ def test_resolve_unknown_name_exits() -> None:
 
 
 # ---------------------------------------------------------------------------
-# diff_summary
+# diff_summary (shortcuts)
 # ---------------------------------------------------------------------------
 
 def test_diff_summary_added_modified_removed() -> None:
@@ -95,20 +87,24 @@ def test_diff_summary_no_changes_returns_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# write_atomic
+# write_atomic (lives in utils now)
 # ---------------------------------------------------------------------------
 
 def test_write_atomic_replaces_file(tmp_path: Path) -> None:
     p = tmp_path / "Preferences"
     p.write_text(json.dumps({"old": True}))
-    sc.write_atomic(p, {"new": True})
+    ut.write_atomic(p, {"new": True})
     assert json.loads(p.read_text()) == {"new": True}
     # No leftover .tmp file
     assert not p.with_suffix(p.suffix + ".tmp").exists()
 
 
 # ---------------------------------------------------------------------------
-# state file (managed_ids sidecar)
+# shortcuts state file (managed_ids sidecar)
+#
+# After the unified-apply refactor there is no public _set_managed_ids:
+# state writing happens via Plan.state_payload → Plan.state_path. The
+# round-trip test below mirrors that flow exactly.
 # ---------------------------------------------------------------------------
 
 def test_managed_ids_round_trip(tmp_path: Path) -> None:
@@ -116,12 +112,10 @@ def test_managed_ids_round_trip(tmp_path: Path) -> None:
     prefs.write_text("{}")
     assert sc._get_managed_ids(prefs) == set()
 
-    sc._set_managed_ids(prefs, {"35012", "34014"})
+    sidecar = prefs.with_name(prefs.name + ".dotbrowser.shortcuts.json")
+    sidecar.write_text(json.dumps({"managed_ids": sorted(["35012", "34014"], key=int)}))
     assert sc._get_managed_ids(prefs) == {"35012", "34014"}
 
-    # Sidecar file is named <Preferences>.dotbrowser.shortcuts.json
-    sidecar = prefs.with_name(prefs.name + ".dotbrowser.shortcuts.json")
-    assert sidecar.exists()
     data = json.loads(sidecar.read_text())
     # IDs are sorted numerically, not lexicographically
     assert data["managed_ids"] == ["34014", "35012"]
@@ -135,7 +129,7 @@ def test_managed_ids_handles_corrupt_sidecar(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# find_preferences
+# find_preferences (shortcuts re-exports it from utils)
 # ---------------------------------------------------------------------------
 
 def test_find_preferences_ok(fake_profile_root: Path) -> None:
@@ -157,3 +151,28 @@ def test_get_nested_creates_intermediate_dicts() -> None:
     inner = sc.get_nested(d, ("a", "b", "c"))
     inner["x"] = 1
     assert d == {"a": {"b": {"c": {"x": 1}}}}
+
+
+# ---------------------------------------------------------------------------
+# settings._is_mac_protected — load-bearing for v1 refusal
+# ---------------------------------------------------------------------------
+
+def test_is_mac_protected_exact_match() -> None:
+    prefs = {"protection": {"macs": {"browser": {"show_home_button": "DEAD"}}}}
+    assert st._is_mac_protected(prefs, ("browser", "show_home_button")) is True
+
+
+def test_is_mac_protected_parent_of_tracked_leaf() -> None:
+    """Writing the parent dict would clobber a tracked child, so we refuse it."""
+    prefs = {"protection": {"macs": {"browser": {"show_home_button": "DEAD"}}}}
+    assert st._is_mac_protected(prefs, ("browser",)) is True
+
+
+def test_is_mac_protected_not_in_tree() -> None:
+    prefs = {"protection": {"macs": {"browser": {"show_home_button": "DEAD"}}}}
+    assert st._is_mac_protected(prefs, ("brave", "tabs", "vertical_tabs_enabled")) is False
+
+
+def test_is_mac_protected_no_protection_subtree() -> None:
+    """A profile that has no protection.macs at all → nothing is tracked."""
+    assert st._is_mac_protected({}, ("homepage",)) is False

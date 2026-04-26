@@ -16,7 +16,7 @@ import pytest
 from dotbrowser.brave import DEFAULT_PROFILE_ROOT
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE_CFG = REPO_ROOT / "examples" / "brave.shortcuts.toml"
+EXAMPLE_CFG = REPO_ROOT / "examples" / "brave.toml"
 
 requires_brave_profile = pytest.mark.skipif(
     DEFAULT_PROFILE_ROOT is None
@@ -43,12 +43,13 @@ def test_help_does_not_crash() -> None:
     assert "brave" in r.stdout.lower()
 
 
-def test_brave_help_works() -> None:
-    r = _run("brave", "shortcuts", "--help")
+def test_brave_help_lists_actions() -> None:
+    r = _run("brave", "--help")
     assert r.returncode == 0
+    # Top-level apply + the two read-only inspection sub-namespaces
     assert "apply" in r.stdout
-    assert "dump" in r.stdout
-    assert "list" in r.stdout
+    assert "shortcuts" in r.stdout
+    assert "settings" in r.stdout
 
 
 def test_list_returns_known_commands() -> None:
@@ -68,10 +69,10 @@ def test_dump_real_profile_succeeds() -> None:
 
 @requires_brave_profile
 def test_dry_run_apply_real_profile_does_not_write() -> None:
-    assert EXAMPLE_CFG.exists(), "examples/brave.shortcuts.toml is part of the repo"
+    assert EXAMPLE_CFG.exists(), "examples/brave.toml is part of the repo"
     real_prefs = DEFAULT_PROFILE_ROOT / "Default" / "Preferences"
     before = real_prefs.read_bytes()
-    r = _run("brave", "shortcuts", "apply", str(EXAMPLE_CFG), "--dry-run")
+    r = _run("brave", "apply", str(EXAMPLE_CFG), "--dry-run")
     # Real Brave may be running — that's fine for a dry-run.
     assert r.returncode == 0, r.stderr
     after = real_prefs.read_bytes()

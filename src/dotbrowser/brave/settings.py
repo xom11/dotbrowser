@@ -10,41 +10,34 @@ For v1 we refuse to write any key that has a `protection.macs.*` entry
 in the user's profile; supporting MAC-protected prefs needs a Chromium
 seed + byte-exact serialization, deferred to v2.
 
-Config schema (TOML):
+Config schema (TOML), inside the unified `brave.toml`:
 
     [settings]
     "brave.tabs.vertical_tabs_enabled" = true
     "bookmark_bar.show_tab_groups" = true
 
 Keys are dotted paths into the `Preferences` JSON. Values may be any
-TOML scalar or array.
+TOML scalar or array. This module exposes:
+
+- `plan_apply(prefs_path, prefs, raw_table)` — pure: builds a `Plan` from
+  a parsed `[settings]` table. Used by the unified `brave apply` runner.
+- CLI sub-action `dump` (read-only). Apply lives at the `brave` level.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib  # type: ignore[no-redef]
-
 from dotbrowser.brave.utils import (
-    _brave_pids,
-    brave_running,
-    find_main_brave_cmdline,
+    Plan,
     find_preferences,
-    kill_brave_and_wait,
     load_prefs,
-    restart_brave,
-    write_atomic,
 )
 
+NAMESPACE = "settings"
 _MISSING = object()
 
 
@@ -106,10 +99,7 @@ def _is_mac_protected(prefs: dict, parts: tuple[str, ...]) -> bool:
     return True
 
 
-def load_config(path: Path) -> dict[str, Any]:
-    with path.open("rb") as f:
-        data = tomllib.load(f)
-    raw = data.get("settings", {})
+def _validate_table(raw: object) -> dict[str, Any]:
     if not isinstance(raw, dict):
         sys.exit("error: [settings] must be a table")
     return raw
@@ -128,11 +118,6 @@ def _get_managed_keys(prefs_path: Path) -> set[str]:
     except json.JSONDecodeError:
         return set()
     return set(data.get("managed_keys", []))
-
-
-def _set_managed_keys(prefs_path: Path, keys: set[str]) -> None:
-    state = _state_file(prefs_path)
-    state.write_text(json.dumps({"managed_keys": sorted(keys)}, indent=2))
 
 
 def diff_summary(
@@ -158,13 +143,15 @@ def diff_summary(
     return lines
 
 
-def cmd_apply(args: argparse.Namespace) -> None:
-    prefs_path = find_preferences(args.profile_root, args.profile)
-    target = load_config(args.config)
+def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
+    """Compute the apply plan for a `[settings]` TOML table.
 
-    prefs = load_prefs(prefs_path)
+    Refuses MAC-protected keys (and the whole `protection.*` subtree)
+    before producing a plan; the entire batch is rejected if any key
+    is invalid, so partial application is not possible.
+    """
+    target = _validate_table(raw_table)
 
-    # Pre-flight: refuse MAC-protected keys and the `protection` subtree.
     rejected: list[str] = []
     for key in target:
         parts = _split_key(key)
@@ -175,7 +162,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
             rejected.append(f"{key} (MAC-protected; writing would be reset on launch)")
     if rejected:
         sys.exit(
-            "error: the following keys cannot be written in v1:\n  "
+            "error: the following [settings] keys cannot be written in v1:\n  "
             + "\n  ".join(rejected)
             + "\n(remove them from your config; MAC support is planned for v2)"
         )
@@ -185,57 +172,27 @@ def cmd_apply(args: argparse.Namespace) -> None:
     removed_keys = config_managed_keys - target_keys
 
     diff = diff_summary(prefs, target, removed_keys)
-    if not diff:
-        print("no changes — Preferences already match config")
-        return
 
-    print(f"target: {prefs_path}")
-    print("changes:")
-    print("\n".join(diff))
+    def apply_fn(prefs: dict) -> None:
+        for key, value in target.items():
+            _set_value(prefs, _split_key(key), value)
+        for key in removed_keys:
+            _pop_value(prefs, _split_key(key))
 
-    if args.dry_run:
-        print("\n(dry-run, nothing written)")
-        return
+    def verify_fn(reloaded: dict) -> None:
+        for key, value in target.items():
+            got = _get_value(reloaded, _split_key(key))
+            if got != value:
+                sys.exit(f"error: settings verification failed for key {key!r}: got {got!r}")
 
-    saved_cmdline: list[str] | None = None
-    if brave_running():
-        if not args.kill_brave:
-            sys.exit(
-                "error: Brave is running. Close it first, or pass --kill-brave\n"
-                "(Brave caches prefs in memory and overwrites the file on exit,\n"
-                "so editing while running is unreliable. --kill-brave SIGKILLs\n"
-                "Brave to prevent the flush, applies, then restarts it.)"
-            )
-        saved_cmdline = find_main_brave_cmdline()
-        pids = _brave_pids()
-        print(f"killing Brave (pids: {' '.join(pids)})")
-        kill_brave_and_wait()
-
-    backup = prefs_path.with_suffix(
-        prefs_path.suffix + f".bak.{datetime.now():%Y%m%d-%H%M%S}"
+    return Plan(
+        namespace=NAMESPACE,
+        diff_lines=diff,
+        state_path=_state_file(prefs_path),
+        state_payload={"managed_keys": sorted(target_keys)},
+        apply_fn=apply_fn,
+        verify_fn=verify_fn,
     )
-    shutil.copy2(prefs_path, backup)
-    print(f"backup: {backup}")
-
-    for key, value in target.items():
-        _set_value(prefs, _split_key(key), value)
-    for key in removed_keys:
-        _pop_value(prefs, _split_key(key))
-    write_atomic(prefs_path, prefs)
-    _set_managed_keys(prefs_path, target_keys)
-
-    reloaded = load_prefs(prefs_path)
-    for key, value in target.items():
-        got = _get_value(reloaded, _split_key(key))
-        if got != value:
-            sys.exit(f"error: verification failed for key {key!r}: got {got!r}")
-    print("ok — applied and verified")
-
-    if saved_cmdline:
-        used = restart_brave(saved_cmdline)
-        print(f"restarting Brave: {' '.join(used)}")
-    elif args.kill_brave:
-        print("Brave killed; could not capture original command line — restart manually.")
 
 
 def _format_toml_value(v: Any) -> str:
@@ -294,20 +251,9 @@ def cmd_dump(args: argparse.Namespace) -> None:
 def register(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser(
         "settings",
-        help="manage general Brave settings (Preferences keys without MAC protection)",
+        help="inspect general settings (apply lives at `brave apply`)",
     )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
-
-    a = sub.add_parser("apply", help="patch Preferences from a TOML config")
-    a.add_argument("config", type=Path)
-    a.add_argument("--dry-run", action="store_true")
-    a.add_argument(
-        "--kill-brave",
-        action="store_true",
-        help="if Brave is running, SIGKILL it (so it can't flush in-memory "
-        "prefs over our changes), apply, then restart it",
-    )
-    a.set_defaults(func=cmd_apply)
 
     d = sub.add_parser(
         "dump",

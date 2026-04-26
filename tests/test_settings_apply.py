@@ -1,8 +1,9 @@
-"""End-to-end tests for `brave settings apply` against a fake profile.
+"""End-to-end tests for `brave apply` exercising only the [settings] table.
 
-Exercises the full apply/refuse/reset round-trip via in-process calls
-to `cmd_apply`. The CLI subprocess is used only for dry-run + error
-paths so we don't depend on a venv layout.
+Companion to test_apply_live.py (which covers the [shortcuts] side):
+both go through the same unified entry point in `dotbrowser.brave.cmd_apply`.
+The fixture's TOML only has a [settings] table, so the shortcuts module
+is a no-op for these cases (missing-table = skip).
 """
 from __future__ import annotations
 
@@ -13,14 +14,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
+from dotbrowser import brave as brave_pkg
 from dotbrowser.brave import settings as st
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _run_cli(profile_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(profile_root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     return subprocess.run(
@@ -31,8 +31,7 @@ def _run_cli(profile_root: Path, *args: str) -> subprocess.CompletedProcess[str]
             "brave",
             "--profile-root",
             str(profile_root),
-            "settings",
-            *args,
+            *extra,
         ],
         capture_output=True,
         text=True,
@@ -59,14 +58,14 @@ def _apply(profile_root: Path, config: Path, *, kill_brave: bool = False) -> Non
         dry_run=False,
         kill_brave=kill_brave,
     )
-    st.cmd_apply(args)
+    brave_pkg.cmd_apply(args)
 
 
 def test_apply_writes_then_drops(
     fake_settings_profile_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
     """Round-trip: apply → re-apply (no-op) → drop key → key is popped."""
-    monkeypatch.setattr(st, "brave_running", lambda: False)
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
 
     cfg = tmp_path / "settings.toml"
 
@@ -185,7 +184,7 @@ def test_apply_creates_missing_nested_path(
     fake_settings_profile_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
     """A key whose parent dicts don't exist yet must be created."""
-    monkeypatch.setattr(st, "brave_running", lambda: False)
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
 
     cfg = tmp_path / "settings.toml"
     _write_config(cfg, {"brave.new_namespace.some_flag": True})
@@ -200,7 +199,7 @@ def test_dump_managed_keys_round_trip(
 ) -> None:
     """`dump` (no args) should emit a TOML doc that, when parsed, has
     exactly the managed keys with their current values."""
-    monkeypatch.setattr(st, "brave_running", lambda: False)
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
 
     cfg = tmp_path / "in.toml"
     _write_config(
@@ -212,7 +211,7 @@ def test_dump_managed_keys_round_trip(
     )
     _apply(fake_settings_profile_root, cfg)
 
-    r = _run_cli(fake_settings_profile_root, "dump")
+    r = _run_cli(fake_settings_profile_root, "settings", "dump")
     assert r.returncode == 0, r.stderr
 
     if sys.version_info >= (3, 11):
@@ -230,6 +229,7 @@ def test_dump_explicit_keys(fake_settings_profile_root: Path) -> None:
     """`dump <key>...` should emit those exact keys regardless of state."""
     r = _run_cli(
         fake_settings_profile_root,
+        "settings",
         "dump",
         "brave.tabs.vertical_tabs_enabled",
         "bookmark_bar.show_tab_groups",
@@ -246,6 +246,6 @@ def test_dump_explicit_keys(fake_settings_profile_root: Path) -> None:
 def test_dump_no_managed_errors(fake_settings_profile_root: Path) -> None:
     """First-run `dump` (no state file, no args) should fail loudly so
     the user knows to pass keys explicitly."""
-    r = _run_cli(fake_settings_profile_root, "dump")
+    r = _run_cli(fake_settings_profile_root, "settings", "dump")
     assert r.returncode != 0
     assert "no managed keys" in (r.stdout + r.stderr)
