@@ -1,5 +1,7 @@
 # dotbrowser
 
+[![CI](https://github.com/xom11/dotbrowser/actions/workflows/ci.yml/badge.svg)](https://github.com/xom11/dotbrowser/actions/workflows/ci.yml)
+
 Manage browser settings as dotfiles. Version-control your browser config and sync it across machines without depending on the browser's own sync service.
 
 > **Status: alpha.** Currently supports **Brave keyboard shortcuts** and **general Brave settings** (Preferences keys without MAC protection — vertical tabs, sidebar toggles, bookmark bar behavior, etc.). The architecture is designed to grow to other browsers (Chromium, Vivaldi, Firefox, ...) and more config domains.
@@ -121,13 +123,16 @@ Default profile root per platform:
 
 ## Roadmap
 
-- [x] macOS profile-root default
+The full prioritized list is in [TODO.md](TODO.md). Highlights:
+
+- [x] Brave shortcuts (non-MAC) on Linux + macOS
 - [x] General Brave settings (non-MAC keys)
 - [x] Unified `brave apply` for shortcuts + settings in one cycle
-- [ ] MAC-protected pref support (homepage, default search engine, ...)
-- [ ] Windows profile-root default
-- [ ] Other browsers (Vivaldi, Edge, Arc, ...) — same Chromium pref system
-- [ ] Firefox via `user.js` generation
+- [x] CI + release-to-PyPI workflow
+- [ ] **MAC-protected pref support** — unlock `homepage`, default search engine, `pinned_tabs`, …
+- [ ] Settings catalog generator (mirror of `command_ids.py` for prefs)
+- [ ] Windows support
+- [ ] Other browsers — Vivaldi, Edge, Arc, Firefox
 
 ## License
 

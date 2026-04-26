@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dotbrowser"
-version = "0.1.0"
-description = "Manage browser settings as dotfiles. Currently supports Brave keyboard shortcuts; designed to expand."
+version = "0.2.0"
+description = "Manage browser settings as dotfiles. Currently supports Brave keyboard shortcuts and general settings (non-MAC keys); designed to expand."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "xom11" }]
-keywords = ["browser", "brave", "dotfiles", "shortcuts", "keybindings", "config"]
+keywords = ["browser", "brave", "dotfiles", "shortcuts", "keybindings", "settings", "config"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
