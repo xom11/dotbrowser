@@ -1,66 +1,96 @@
-# Unified config for `dotbrowser brave apply`.
+# Unified config for `dotbrowser brave apply`. One file, one apply
+# cycle (kill-brave → backup → write).
 #
-# This single file replaces the split brave.shortcuts.toml +
-# brave.settings.toml workflow: one apply command, one kill-brave +
-# backup + write cycle.
-#
-# Semantics for omitting a table:
-# - Header missing entirely (no `[shortcuts]` line) → that module is
-#   skipped, its previously-managed entries left alone. Safe default
-#   when you only want to manage the other namespace.
-# - Header present but body empty (`[settings]` followed by nothing)
-#   → all previously-managed entries are reset / popped. This is the
-#   explicit "wipe my managed entries" gesture.
+# Table semantics:
+#   - missing header  → module skipped, managed entries left alone.
+#   - empty body      → all previously-managed entries reset / popped.
 
 [shortcuts]
 toggle_sidebar = ["Control+Shift+KeyE"]
 toggle_ai_chat = ["Alt+KeyA"]
 focus_location = ["Control+KeyL", "Alt+KeyD"]
 
-# vim-style hjkl: Alt+H/L cho lịch sử, Alt+J/K cho tab.
+# vim-style hjkl: Alt+H/L for history, Alt+J/K for tab switching.
 back                = ["Alt+KeyH"]
 forward             = ["Alt+KeyL"]
 select_previous_tab = ["Alt+KeyJ"]
 select_next_tab     = ["Alt+KeyK"]
 
-# Ctrl+T trên cả 2 OS, macOS giữ thêm Cmd+T (Meta+) cho muscle memory.
-# Trên Linux Meta+KeyT = Super+T thường bị DE grab → no-op vô hại.
-new_tab      = ["Control+KeyT", "Meta+KeyT"]
-close_tab    = ["Control+KeyW", "Meta+KeyW"]
-reload       = ["Control+KeyR", "Meta+KeyR"]
-# show_history: macOS reserve Cmd+H cho "Hide Window" → dùng Cmd+Y (mac default).
+# Ctrl+T on both OSes; macOS also keeps Cmd+T (Meta+) for muscle memory.
+# On Linux Meta+KeyT = Super+T is usually grabbed by the DE — harmless no-op.
+new_tab   = ["Control+KeyT", "Meta+KeyT"]
+close_tab = ["Control+KeyW", "Meta+KeyW"]
+reload    = ["Control+KeyR", "Meta+KeyR"]
+
+# macOS reserves Cmd+H for "Hide Window" → use Cmd+Y (Brave's mac default).
 show_history = ["Control+KeyH", "Meta+KeyY"]
 
 [settings]
-# --- Appearance ---------------------------------------------------------
-# "Use system title bar and borders" OFF → giữ custom chrome của Brave.
-"browser.custom_chrome_frame" = true
-
-# "Show tab groups in bookmarks" OFF.
+# Appearance
+"browser.custom_chrome_frame"  = true   # keep Brave's custom title bar
 "bookmark_bar.show_tab_groups" = false
+"auto_pin_new_tab_groups"      = false
+"brave.location_bar_is_wide"   = false  # standard-width omnibox
 
-# "Automatically pin new tab groups created on any device to bookmarks" OFF.
-"auto_pin_new_tab_groups" = false
-
-# "Use wide address bar" OFF — giữ omnibox chiều rộng tiêu chuẩn.
-"brave.location_bar_is_wide" = false
-
-# --- Tabs ---------------------------------------------------------------
+# Tabs
 "brave.tabs.vertical_tabs_enabled"   = true
 "brave.tabs.vertical_tabs_collapsed" = false
 
-# --- Settings KHÔNG quản lý được trong v1 (MAC-protected) ---------------
-# Các toggle dưới đây có entry trong `protection.macs.*` của profile, nên
-# `dotbrowser brave apply` sẽ refuse nếu bạn thử thêm chúng vào đây:
-#   - "Show home button"               (browser.show_home_button)
-#   - "Show bookmarks bar"             (bookmark_bar.show_on_all_tabs +
-#                                        brave.always_show_bookmark_bar_on_ntp)
-#   - "Always show full URLs"          (omnibox.prevent_url_elisions, có thể MAC)
+# Bookmarks bar + omnibox (verified non-MAC; safe to manage here)
+# "Show bookmarks bar" = Never (both flags false). Set show_on_all_tabs=true
+# alone for "Always", or show_on_all_tabs=false + on_ntp=true for "Only on NTP".
+"bookmark_bar.show_on_all_tabs"         = false  # never on regular tabs
+"brave.always_show_bookmark_bar_on_ntp" = false  # never on the new-tab page
+"omnibox.prevent_url_elisions"          = true   # always show full URLs
+
+# New Tab Page — declutter (all non-MAC, verified against brave-core source)
+# Note: `brave.new_tab_page.hide_all_widgets` exists but is ignored by the
+# refresh NTP (the current default UI). Use the per-widget toggles below.
+"ntp.shortcust_visible"                            = false  # top-sites icon row (Chromium upstream typo, not ours)
+"brave.brave_search.show-ntp-search"               = false  # NTP search box
+"brave.brave_search.show-ntp-chat"                 = false  # NTP AI chat input
+"brave.new_tab_page.show_background_image"         = false  # artistic background
+"brave.new_tab_page.show_branded_background_image" = false  # sponsored background banner
+"brave.new_tab_page.show_clock"                    = false  # clock widget
+"brave.new_tab_page.show_stats"                    = false  # stats card (trackers blocked, bandwidth)
+"brave.new_tab_page.show_rewards"                  = false  # rewards card
+"brave.new_tab_page.show_brave_vpn"                = false  # vpn widget
+"brave.new_tab_page.show_together"                 = false  # brave talk widget
+"brave.new_tab_page.show_brave_news"               = false  # brave news cards (key still uses old "today" naming internally)
+
+# Toolbar declutter — these buttons render on every page, including NTP, so
+# they look like NTP elements but are actually toolbar actions.
+"brave.wallet.show_wallet_icon_on_toolbar"               = false  # wallet icon
+"brave.ai_chat.show_toolbar_button"                      = false  # leo AI launcher icon
+"brave.rewards.show_brave_rewards_button_in_location_bar" = false # rewards icon (location bar)
+"brave.brave_vpn.show_button"                            = false  # vpn icon
+"brave.today.should_show_toolbar_button"                 = false  # brave news icon
+
+# Leo AI — fully out of the way (not just the toolbar button)
+"brave.ai_chat.context_menu_enabled"          = false  # no "Ask Leo" right-click items
+"brave.ai_chat.autocomplete_provider_enabled" = false  # no Leo entries in the omnibox
+
+# ---------------------------------------------------------------------------
+# Keys dotbrowser will REFUSE (MAC-protected — Chromium tracked prefs).
+# Set these via the Brave UI manually; dotbrowser intentionally stays out
+# of the MAC-rewriting business. See https://github.com/xom11/dotbrowser/issues/1
+# for the rationale.
 #
-# MAC support sẽ được thêm ở v2 (cần Chromium seed + serialize byte-exact).
+# Well-known offenders from Chromium's kTrackedPrefs[]:
+#   homepage, homepage_is_newtabpage
+#   session.startup_urls, session.restore_on_startup
+#   browser.show_home_button
+#   default_search_provider_data.template_url_data
+#   pinned_tabs
+#   search_provider_overrides
+#   extensions.settings.<extension_id>          (per installed extension)
+#   google.services.{account_id,last_username}  (sign-in identity)
 #
-# --- Cách tự khám phá thêm key ------------------------------------------
-# Toggle setting bạn muốn manage trong UI Brave → đóng Brave → chạy
-#   dotbrowser brave settings dump <đoạn-bạn-đoán-key>
-# Hoặc grep file Preferences trực tiếp:
+# Authoritative check: just put the key in [settings] and run
+#   dotbrowser brave apply <file> --dry-run
+# If it refuses, the key is MAC-protected in your profile. The list of
+# tracked prefs only materializes after you've touched them once via UI,
+# so the refusal is profile-driven, not a static blocklist.
+#
+# Discover all keys currently in your profile:
 #   grep -oE '"[^"]*"\s*:' ~/.config/BraveSoftware/Brave-Browser/Default/Preferences | sort -u
