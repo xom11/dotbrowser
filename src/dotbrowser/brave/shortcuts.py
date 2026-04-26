@@ -42,6 +42,33 @@ def _validate_table(raw: object) -> dict[str, list[str]]:
     return out
 
 
+def _normalize_accelerator(key: str) -> str:
+    """Translate the super/cmd modifier to Brave's platform-canonical form.
+
+    Brave serializes the super/cmd key as `Command+` on macOS and `Meta+`
+    on Linux/Windows. Writing the wrong spelling is destructive: Brave's
+    parser silently drops the unknown modifier on launch, so `Meta+KeyR`
+    on macOS reduces to just `KeyR` (a single-letter binding that fires
+    while typing). Accept either spelling in the TOML so configs stay
+    portable, and rewrite to the current platform's form before persisting.
+    """
+    if sys.platform == "darwin":
+        return key.replace("Meta+", "Command+")
+    return key.replace("Command+", "Meta+")
+
+
+def _normalize_keys(keys: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in keys:
+        norm = _normalize_accelerator(k)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
+
+
 def resolve_command_ids(shortcuts: dict[str, list[str]]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     unknown = []
@@ -98,6 +125,7 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     for backups, kill-brave, write_atomic, state-file write, and verify.
     """
     config = _validate_table(raw_table)
+    config = {name: _normalize_keys(keys) for name, keys in config.items()}
     target = resolve_command_ids(config)
 
     current = dict(get_nested(prefs, ACCELERATORS_KEY_PATH))

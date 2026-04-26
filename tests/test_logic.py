@@ -40,6 +40,48 @@ def test_validate_table_rejects_non_string_in_list() -> None:
 
 
 # ---------------------------------------------------------------------------
+# shortcuts._normalize_keys — platform-specific modifier rewrite
+#
+# Brave uses `Command+` on macOS and `Meta+` on Linux/Windows for the
+# super/cmd key. The wrong spelling is silently dropped at parse time
+# (e.g. `Meta+KeyR` on macOS → bare `KeyR`), which is destructive.
+# ---------------------------------------------------------------------------
+
+import sys as _sys
+
+
+def test_normalize_meta_to_command_on_macos(monkeypatch) -> None:
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    assert sc._normalize_keys(["Meta+KeyR", "Control+KeyT"]) == [
+        "Command+KeyR",
+        "Control+KeyT",
+    ]
+
+
+def test_normalize_command_to_meta_on_linux(monkeypatch) -> None:
+    monkeypatch.setattr(_sys, "platform", "linux")
+    assert sc._normalize_keys(["Command+KeyR", "Control+KeyT"]) == [
+        "Meta+KeyR",
+        "Control+KeyT",
+    ]
+
+
+def test_normalize_dedupes_after_translation(monkeypatch) -> None:
+    """Both spellings collapse on the target platform — user intent is
+    "the super/cmd key" either way; no point keeping a duplicate."""
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    assert sc._normalize_keys(["Meta+KeyT", "Command+KeyT"]) == ["Command+KeyT"]
+
+
+def test_normalize_leaves_other_modifiers_alone(monkeypatch) -> None:
+    monkeypatch.setattr(_sys, "platform", "darwin")
+    assert sc._normalize_keys(["Control+Shift+KeyE", "Alt+KeyA"]) == [
+        "Control+Shift+KeyE",
+        "Alt+KeyA",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # resolve_command_ids
 # ---------------------------------------------------------------------------
 

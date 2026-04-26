@@ -94,6 +94,8 @@ This is the load-bearing knowledge for `brave/shortcuts.py`:
 
 6. **Write order is owned by the orchestrator, not this module.** `plan_apply` returns a `Plan`; the orchestrator in `brave/__init__.py` does `write_atomic(prefs)` first, then writes each plan's state sidecar. State files are written AFTER `Preferences` so a crash mid-apply doesn't claim ownership of IDs we failed to write.
 
+7. **Platform-specific super/cmd modifier rewrite.** Brave serializes the super/cmd key as `Command+` on macOS and `Meta+` on Linux/Windows. Writing the wrong spelling is silently destructive — Brave's parser drops the unrecognized modifier on launch, so `Meta+KeyR` written on macOS reduces to bare `KeyR` (a single-letter binding that fires while typing). `_normalize_keys` rewrites either spelling to the current platform's form before `plan_apply` resolves IDs, so the same TOML config is portable. The diff and `verify_fn` both compare against the normalized values, so the displayed diff matches what Brave will actually parse. Only `Meta+` ↔ `Command+` are translated; other modifiers (`Control+`, `Shift+`, `Alt+`) pass through.
+
 ### Brave settings: how MAC refusal works
 
 This is the load-bearing knowledge for `brave/settings.py`:
