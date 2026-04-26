@@ -38,6 +38,61 @@ def test_default_profile_root_unsupported_returns_none(monkeypatch) -> None:
     assert brave_pkg._default_profile_root() is None
 
 
+def _make_brave_profile(root: Path) -> None:
+    """Materialize the minimum a `Local State` probe will accept."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "Local State").write_text("{}")
+
+
+def test_default_profile_root_linux_picks_snap_when_only_snap_has_data(
+    monkeypatch, tmp_path
+) -> None:
+    """On a Snap-only Ubuntu install (`sudo snap install brave`, no .deb),
+    the profile lives at `~/snap/brave/current/.config/...`. Auto-detect it."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    snap_root = tmp_path / "snap" / "brave" / "current" / ".config" / "BraveSoftware" / "Brave-Browser"
+    _make_brave_profile(snap_root)
+
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+    assert brave_pkg._default_profile_root() == snap_root
+
+
+def test_default_profile_root_linux_prefers_direct_install_over_snap(
+    monkeypatch, tmp_path
+) -> None:
+    """If both .deb and Snap have populated profiles, pick .deb — that
+    matches what `which brave-browser` resolves to on a dual-install
+    machine, so users running dotbrowser get the same browser they're
+    already interacting with from the terminal."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    deb_root = tmp_path / ".config" / "BraveSoftware" / "Brave-Browser"
+    snap_root = tmp_path / "snap" / "brave" / "current" / ".config" / "BraveSoftware" / "Brave-Browser"
+    _make_brave_profile(deb_root)
+    _make_brave_profile(snap_root)
+
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+    assert brave_pkg._default_profile_root() == deb_root
+
+
+def test_default_profile_root_linux_falls_back_to_direct_when_neither_populated(
+    monkeypatch, tmp_path
+) -> None:
+    """Brand-new machine with neither install populated: return the .deb
+    path so the eventual `Preferences not found at ...` error message
+    points at the location most users would expect."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    deb_root = tmp_path / ".config" / "BraveSoftware" / "Brave-Browser"
+
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+    assert brave_pkg._default_profile_root() == deb_root
+
+
 @pytest.mark.parametrize(
     "platform,expected_name",
     [("darwin", "Brave Browser"), ("linux", "brave"), ("linux2", "brave")],

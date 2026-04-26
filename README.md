@@ -180,6 +180,20 @@ dotbrowser brave pwa dump                      # what does dotbrowser have force
 
 Default profile root: `~/.config/BraveSoftware/Brave-Browser` on Linux, `~/Library/Application Support/BraveSoftware/Brave-Browser` on macOS. Override with `-r/--profile-root`.
 
+### Brave install methods
+
+| Install | Auto-detected | `-k` works | `[pwa]` works | Notes |
+|---|---|---|---|---|
+| `.deb` (Debian / Ubuntu apt repo) | yes | yes | yes | Reference install; full support. |
+| `.rpm` (Fedora / RHEL dnf repo) | yes | yes | yes | Same paths as `.deb` (Chromium upstream convention). |
+| Arch / `pacman` | yes | yes | yes | Same. |
+| NixOS (`pkgs.brave`) | yes | yes | yes | Same. |
+| **Snap** (`sudo snap install brave`) | yes (probes `~/snap/brave/current/.config/...`) | yes | **no** — sandbox doesn't read `/etc/brave/policies/managed/` | Use `.deb` for `[pwa]` support. |
+| **Flatpak** (`flathub com.brave.Browser`) | no — pass `--profile-root ~/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser` | no — process detection breaks (runs inside `bwrap`) | no | `dump`/`list` work with `--profile-root`; `apply` not recommended. Use `.deb`. |
+| **macOS** `.dmg` | yes | yes | yes | Includes the cfprefsd cache invalidation needed for `[pwa]`. |
+
+Dual-install machines (e.g. `.deb` + Snap installed side-by-side) prefer the direct-install profile, matching what `which brave-browser` resolves to.
+
 ## Caveats
 
 - **Brave Sync** can overwrite `[settings]` entries on its next pulse if they fall in a synced category. UI-layout keys like `brave.tabs.vertical_tabs_*` are local-only and immune.

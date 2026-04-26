@@ -67,12 +67,30 @@ def _default_profile_root() -> Path | None:
     Returns None for unsupported platforms; the CLI then requires
     --profile-root to be passed explicitly so that --help still works
     on Windows / BSD / etc. without crashing at import time.
+
+    Linux probes both the direct-install location (.deb / .rpm / pacman
+    / nix all share `~/.config/BraveSoftware/Brave-Browser`) and the
+    Snap location (`~/snap/brave/current/.config/...`). Direct install
+    wins when both have data — that matches what `which brave-browser`
+    resolves to on a dual-install machine. The probe key is `Local
+    State`: Chromium creates it on first launch, so its presence is a
+    reliable "this profile has been used" signal independent of which
+    `--profile` directory the user later targets. Flatpak Brave is not
+    auto-detected because its sandbox also breaks our process-detection
+    and restart paths — pass `--profile-root` if you want to try it.
     """
     home = Path.home()
     if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "BraveSoftware" / "Brave-Browser"
     if sys.platform.startswith("linux"):
-        return home / ".config" / "BraveSoftware" / "Brave-Browser"
+        candidates = (
+            home / ".config" / "BraveSoftware" / "Brave-Browser",
+            home / "snap" / "brave" / "current" / ".config" / "BraveSoftware" / "Brave-Browser",
+        )
+        for c in candidates:
+            if (c / "Local State").exists():
+                return c
+        return candidates[0]
     return None
 
 
