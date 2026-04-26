@@ -4,153 +4,103 @@
 [![PyPI](https://img.shields.io/pypi/v/dotbrowser.svg)](https://pypi.org/project/dotbrowser/)
 [![Python](https://img.shields.io/pypi/pyversions/dotbrowser.svg)](https://pypi.org/project/dotbrowser/)
 
-Manage browser settings as dotfiles. Version-control your browser config and sync it across machines without depending on the browser's own sync service.
+Manage your browser as a dotfile. Keep Brave shortcuts and UI tweaks in a single TOML, apply with one command, sync across machines — no browser cloud sync required.
 
-> **Status: alpha.** Currently supports **Brave keyboard shortcuts** and **general Brave settings** (Preferences keys without MAC protection — vertical tabs, sidebar toggles, bookmark bar behavior, etc.). The architecture is designed to grow to other browsers (Chromium, Vivaldi, Firefox, ...) and more config domains.
+> **Status: alpha.** Brave on Linux + macOS — keyboard shortcuts and general settings (vertical tabs, sidebar, NTP & toolbar declutter, …). Architecture is designed to grow to other browsers.
 
-## Why
+## Quick start
 
-Chromium-based browsers don't expose most settings through a config file the way Firefox does (`user.js`). To sync custom shortcuts and UI tweaks across machines, your only options have traditionally been:
+The repo ships an opinionated [`examples/brave.toml`](examples/brave.toml): vertical tabs collapsed to icons, decluttered new tab page, stripped-down toolbar, vim-style hjkl shortcuts.
 
-- the browser's own cloud sync (requires login, opaque storage, only syncs what *it* decides to sync — vertical-tabs collapsed state, sidebar toggles, etc. are local-only)
-- clicking through the UI on every machine
-- an external extension like Shortkeys (lives outside the browser's native shortcut system)
+![Brave with the minimal config — empty new tab page, vertical tabs collapsed to icons, decluttered toolbar](docs/img/minimal-brave.png)
 
-`dotbrowser` patches the browser's profile JSON directly — for keys that are NOT in the MAC-protected tracked-prefs region — so a single TOML file in your dotfiles repo becomes the source of truth.
+No clone, no install — fetch the config straight from GitHub and apply with `uvx`:
+
+```bash
+curl -fsSL -o brave.toml https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+uvx dotbrowser brave apply brave.toml --dry-run    # preview the diff
+uvx dotbrowser brave apply brave.toml -k           # apply — SIGKILLs Brave + restarts
+```
+
+Anything you later remove from `brave.toml` reverts to Brave's default on the next `apply` — no orphan entries.
 
 ## Install
 
-From PyPI (recommended):
-
 ```bash
-pip install dotbrowser
+pipx install dotbrowser     # global, isolated venv
+uvx dotbrowser <args>       # run on demand, no install step
+pip install dotbrowser      # into the active environment
 ```
 
-Or pin to a version:
+Pin a version: `pipx install "dotbrowser>=0.3,<0.4"`. Run a specific tag: `uvx --from 'dotbrowser==0.3.0' dotbrowser <args>`. Run from a branch: `uvx --from git+https://github.com/xom11/dotbrowser dotbrowser <args>`. Local dev: `pip install -e ".[test]"`.
 
-```bash
-pip install "dotbrowser>=0.2,<0.3"
-```
+## Build your own config
 
-Or install from source for development:
-
-```bash
-git clone https://github.com/xom11/dotbrowser
-cd dotbrowser
-pip install -e ".[test]"
-```
-
-Either way the entry point is the `dotbrowser` command. To run without installing the entry point:
-
-```bash
-python -m dotbrowser brave shortcuts list
-```
-
-## Usage
-
-### One file, one command
-
-A single `brave.toml` carries both `[shortcuts]` and `[settings]`. One `apply` call writes both in one kill-browser + backup + write cycle:
+`brave.toml` carries `[shortcuts]` and `[settings]`. One `apply` writes both in a single backup + write cycle.
 
 ```toml
 # brave.toml
 [shortcuts]
 toggle_sidebar = ["Control+Shift+KeyE"]
 toggle_ai_chat = ["Alt+KeyA"]
-focus_location = ["Control+KeyL", "Alt+KeyD"]
 
-# vim-style hjkl: Alt+H/L for history, Alt+J/K for tabs.
+# vim-style hjkl
 back                = ["Alt+KeyH"]
 forward             = ["Alt+KeyL"]
 select_previous_tab = ["Alt+KeyJ"]
 select_next_tab     = ["Alt+KeyK"]
 
+# Same chord on both OSes — Meta+ = Cmd on macOS, Super on Linux (auto-translated)
+new_tab   = ["Control+KeyT", "Meta+KeyT"]
+close_tab = ["Control+KeyW", "Meta+KeyW"]
+
 [settings]
 "brave.tabs.vertical_tabs_enabled"   = true
-"brave.tabs.vertical_tabs_collapsed" = false
-"bookmark_bar.show_tab_groups"       = true
+"brave.tabs.vertical_tabs_collapsed" = true
+"bookmark_bar.show_on_all_tabs"      = false
 ```
 
 ```bash
-# Preview
-dotbrowser brave apply brave.toml --dry-run
-
-# Apply (Brave must be closed, or pass --kill-browser)
-dotbrowser brave apply brave.toml
-dotbrowser brave apply brave.toml --kill-browser   # SIGKILL Brave, apply, restart
+dotbrowser brave apply brave.toml --dry-run    # preview the diff
+dotbrowser brave apply brave.toml -k           # apply, SIGKILL + restart Brave
 ```
 
-Either table can be omitted — that module is then skipped (state file untouched). An empty header (`[settings]` with no entries) is the explicit "wipe my managed entries" gesture.
+- **Shortcut keys**: Chromium [KeyEvent codes](https://www.w3.org/TR/uievents-code/) joined by `+` — `Control+Shift+KeyP`, `Alt+Digit1`, `F11`.
+- **Setting keys**: dotted paths into the profile `Preferences` JSON.
+- **Empty `[settings]` header** (no entries) wipes everything dotbrowser previously managed in that namespace. **Missing header** = skip the namespace entirely.
 
-### Inspection
+### Inspect
 
 ```bash
-# What shortcuts am I currently overriding?
-dotbrowser brave shortcuts dump
-
-# Find a command by name
-dotbrowser brave shortcuts list toggle
-
-# What's the current value of a setting? (useful for building a config)
-dotbrowser brave settings dump brave.tabs.vertical_tabs_enabled bookmark_bar.show_tab_groups
+dotbrowser brave shortcuts dump                                  # what am I currently overriding?
+dotbrowser brave shortcuts list toggle                           # search command names
+dotbrowser brave settings dump brave.tabs.vertical_tabs_enabled  # current value(s) of a setting
 ```
-
-Shortcut syntax = Chromium [KeyEvent codes](https://www.w3.org/TR/uievents-code/) joined by `+`, e.g. `Control+Shift+KeyP`, `Alt+Digit1`, `F11`.
-
-Settings keys = dotted paths into the profile `Preferences` JSON, e.g. `brave.tabs.vertical_tabs_enabled`, `bookmark_bar.show_tab_groups`.
 
 ### Multiple profiles
 
 ```bash
-dotbrowser brave --profile "Profile 1" apply brave.toml
+dotbrowser brave -p "Profile 1" apply brave.toml
 ```
 
 ## How it works
 
-Brave keeps user prefs in its profile `Preferences` JSON. `dotbrowser`:
+`dotbrowser` patches Brave's profile `Preferences` JSON directly. It refuses to run while Brave is open (Brave overwrites the file on exit) — `-k` is the escape hatch: SIGKILL Brave, apply, restart. Each apply takes one timestamped backup, writes atomically (temp file + rename), and verifies the result by reloading.
 
-1. Parses the TOML once, hands each table to its module's `plan_apply`. Each module validates and computes its own diff without touching disk.
-2. Refuses if Brave is running (Brave overwrites `Preferences` on exit). `--kill-browser` is the escape hatch: capture argv, SIGKILL, apply, relaunch via the OS-correct path (`brave-browser` wrapper on Linux, `open -a "Brave Browser"` on macOS).
-3. Backs up `Preferences` once with a timestamp.
-4. Applies all module mutations to one in-memory dict, then writes atomically (temp file + rename) — so a failure in one module aborts the whole apply, no partial writes.
-5. Tracks managed entries per module in a sidecar file (`Preferences.dotbrowser.shortcuts.json`, `Preferences.dotbrowser.settings.json`). Removing a key from your config resets that shortcut to its default (or pops the setting back to Brave's compiled-in default) on next `apply`.
-6. Reloads and verifies the file after writing.
+Managed entries are tracked per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores Brave's default on the next `apply`.
 
-### MAC-protected keys (the v1 limitation)
-
-Some Chromium prefs are "tracked": they have a sibling MAC under `protection.macs.<key>` that Brave verifies on launch. Writing them without updating the MAC silently resets them. The settings module **refuses** any key with a `protection.macs.*` entry in your profile and tells you which keys it rejected — better than a write that vanishes 30 seconds later.
-
-Common refused keys (in this category): `homepage`, `session.startup_urls`, `browser.show_home_button`, `default_search_provider_data.template_url_data`, `pinned_tabs`. MAC support is planned for v2 (requires the Chromium seed + byte-exact serialization).
-
-Default profile root per platform:
-
-| Platform | Path |
-|---|---|
-| Linux | `~/.config/BraveSoftware/Brave-Browser` |
-| macOS | `~/Library/Application Support/BraveSoftware/Brave-Browser` |
+Default profile root: `~/.config/BraveSoftware/Brave-Browser` on Linux, `~/Library/Application Support/BraveSoftware/Brave-Browser` on macOS. Override with `-r/--profile-root`.
 
 ## Caveats
 
-- **Linux + macOS** are supported. Windows would need a different `--profile-root` default (`%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data`) and process-management code path.
-- **Brave Sync** may overwrite some `[settings]` entries on its next sync pulse if they happen to fall in a synced category. UI-layout keys like `brave.tabs.vertical_tabs_*` are local-only and immune; if you hit a synced one, disable Sync for that category.
-- Command-ID mapping is auto-generated. If Brave/Chromium adds new commands you want to bind, regenerate:
-  ```bash
-  python scripts/generate_brave_command_ids.py
-  ```
-- Only Brave is supported. Chrome doesn't expose a shortcut customization UI at all (shortcuts are hardcoded), so this approach doesn't apply to vanilla Chrome.
+- **Brave Sync** can overwrite `[settings]` entries on its next pulse if they fall in a synced category. UI-layout keys like `brave.tabs.vertical_tabs_*` are local-only and immune.
+- **Linux + macOS only.** Windows needs a custom `--profile-root` and process-management path.
+- **Brave only.** Chrome hardcodes shortcuts (no UI to customize), so this approach doesn't apply.
+- A handful of settings (`homepage`, default search engine, `pinned_tabs`, …) are integrity-protected and can't be patched yet — dotbrowser refuses them with a clear error rather than letting the change silently disappear on next launch. Set those via the Brave UI for now.
 
 ## Roadmap
 
-The full prioritized list is in [TODO.md](TODO.md). Highlights:
-
-- [x] Brave shortcuts (non-MAC) on Linux + macOS
-- [x] General Brave settings (non-MAC keys)
-- [x] Unified `brave apply` for shortcuts + settings in one cycle
-- [x] CI + release-to-PyPI workflow
-- [ ] **MAC-protected pref support** — unlock `homepage`, default search engine, `pinned_tabs`, …
-- [ ] Settings catalog generator (mirror of `command_ids.py` for prefs)
-- [ ] Windows support
-- [ ] Other browsers — Vivaldi, Edge, Arc, Firefox
+Open items live in [TODO.md](TODO.md): expanded settings coverage (homepage / default search / pinned tabs), settings catalog generator, Windows support, more browsers (Vivaldi, Edge, Arc, Firefox).
 
 ## License
 
