@@ -204,7 +204,7 @@ Dual-install machines (e.g. `.deb` + Snap installed side-by-side) prefer the dir
 
 ## Roadmap
 
-Open items live in [TODO.md](TODO.md): expanded settings coverage (homepage / default search / pinned tabs), settings catalog generator, Windows support, more browsers (Vivaldi, Edge, Arc, Firefox).
+Open work is tracked on the [issues page](https://github.com/xom11/dotbrowser/issues): settings catalog generator, Windows support, Brave Beta / Nightly auto-detection, macOS live CI, and more.
 
 ## License
 

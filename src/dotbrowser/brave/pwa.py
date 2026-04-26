@@ -29,7 +29,7 @@ The user-level macOS path (`~/Library/Preferences/com.brave.Browser.plist`
 via `defaults write`) was tested and rejected: Chromium classifies
 `WebAppInstallForceList` as `scope: machine`, so values written there
 load as recommended (not mandatory) and the install-force-list handler
-ignores them. Probe procedure recorded in TODO.md.
+ignores them. Probe procedure recorded in CLAUDE.md.
 
 This is the only module in dotbrowser today that escalates privileges,
 and it is also the only module whose persisted state is *not* a sidecar
