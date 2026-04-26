@@ -1,0 +1,13 @@
+# Brave keyboard shortcut overrides.
+#
+# Only list commands you want to CUSTOMIZE — anything not listed keeps Brave's
+# default. Removing a key here on next `apply` resets that command to default.
+#
+# Key syntax = Chromium KeyEvent codes joined with "+", e.g.
+#   "Control+Shift+KeyP", "Alt+Digit1", "F11"
+# See `brave_shortcuts.py list` for all command names.
+
+[shortcuts]
+toggle_sidebar    = ["Control+Shift+KeyE"]
+toggle_ai_chat    = ["Alt+KeyA"]
+focus_location    = ["Control+KeyL", "Alt+KeyD"]
