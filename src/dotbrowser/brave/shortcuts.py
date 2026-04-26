@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -40,6 +41,73 @@ def brave_running() -> bool:
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+
+def _brave_pids() -> list[str]:
+    try:
+        out = subprocess.check_output(
+            ["pgrep", "-x", "brave"], stderr=subprocess.DEVNULL
+        )
+        return out.decode().split()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+
+
+def _read_cmdline(pid: str) -> list[str] | None:
+    """Read /proc/PID/cmdline. Chromium subprocesses overwrite their argv
+    region (setproctitle-style) and lose the null separators, leaving a single
+    space-joined string. Fall back to shlex in that case."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except (FileNotFoundError, PermissionError):
+        return None
+    parts = [a.decode("utf-8", "replace") for a in raw.rstrip(b"\0").split(b"\0")]
+    if len(parts) == 1 and " " in parts[0]:
+        import shlex
+        return shlex.split(parts[0])
+    return parts
+
+
+def find_main_brave_cmdline() -> list[str] | None:
+    """The main Brave process is the one without a `--type=...` arg
+    (renderer/utility/gpu subprocesses all carry --type)."""
+    for pid in _brave_pids():
+        args = _read_cmdline(pid)
+        if args and not any(a.startswith("--type=") for a in args):
+            return args
+    return None
+
+
+def kill_brave_and_wait(timeout: float = 5.0) -> None:
+    subprocess.run(["pkill", "-KILL", "-x", "brave"], stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not brave_running():
+            return
+        time.sleep(0.1)
+    sys.exit(f"error: Brave still running after SIGKILL + {timeout}s wait")
+
+
+def restart_brave(captured_cmdline: list[str]) -> list[str]:
+    """Restart Brave, preferring the `brave-browser` wrapper script if
+    present in PATH. The wrapper sets CHROME_WRAPPER and adjusts PATH for
+    xdg utilities (default-browser registration, URL handlers); launching
+    the inner binary directly silently breaks those.
+
+    Returns the cmdline actually used (for logging)."""
+    wrapper = shutil.which("brave-browser") or shutil.which("brave")
+    if wrapper:
+        cmdline = [wrapper, *captured_cmdline[1:]]
+    else:
+        cmdline = captured_cmdline
+    subprocess.Popen(
+        cmdline,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return cmdline
 
 
 def load_prefs(path: Path) -> dict:
@@ -153,11 +221,19 @@ def cmd_apply(args: argparse.Namespace) -> None:
         print("\n(dry-run, nothing written)")
         return
 
-    if brave_running() and not args.force:
-        sys.exit(
-            "error: Brave is running. Close it first, or pass --force to risk "
-            "having Brave overwrite changes on exit."
-        )
+    saved_cmdline: list[str] | None = None
+    if brave_running():
+        if not args.kill_brave:
+            sys.exit(
+                "error: Brave is running. Close it first, or pass --kill-brave\n"
+                "(Brave caches prefs in memory and overwrites the file on exit,\n"
+                "so editing while running is unreliable. --kill-brave SIGKILLs\n"
+                "Brave to prevent the flush, applies, then restarts it.)"
+            )
+        saved_cmdline = find_main_brave_cmdline()
+        pids = _brave_pids()
+        print(f"killing Brave (pids: {' '.join(pids)})")
+        kill_brave_and_wait()
 
     backup = prefs_path.with_suffix(
         prefs_path.suffix + f".bak.{datetime.now():%Y%m%d-%H%M%S}"
@@ -182,6 +258,12 @@ def cmd_apply(args: argparse.Namespace) -> None:
         if reloaded_accels.get(cid) != keys:
             sys.exit(f"error: verification failed for command {cid}")
     print("ok — applied and verified")
+
+    if saved_cmdline:
+        used = restart_brave(saved_cmdline)
+        print(f"restarting Brave: {' '.join(used)}")
+    elif args.kill_brave:
+        print("Brave killed; could not capture original command line — restart manually.")
 
 
 def cmd_dump(args: argparse.Namespace) -> None:
@@ -236,7 +318,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     a = sub.add_parser("apply", help="patch Preferences from a TOML config")
     a.add_argument("config", type=Path)
     a.add_argument("--dry-run", action="store_true")
-    a.add_argument("--force", action="store_true", help="apply even if Brave is running")
+    a.add_argument(
+        "--kill-brave",
+        action="store_true",
+        help="if Brave is running, SIGKILL it (so it can't flush in-memory "
+        "prefs over our changes), apply, then restart it",
+    )
     a.set_defaults(func=cmd_apply)
 
     d = sub.add_parser("dump", help="emit current shortcuts as TOML")
