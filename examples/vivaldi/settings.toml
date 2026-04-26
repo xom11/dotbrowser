@@ -1,0 +1,17 @@
+# `dotbrowser vivaldi apply` — UI / behaviour settings only.
+# Keys are dotted paths into Vivaldi's `Preferences` JSON. A handful of
+# keys (homepage, default search, pinned tabs, …) are MAC-protected and
+# will be refused with a clear error — set those via the Vivaldi UI.
+#
+# Many UI keys only materialize in `Preferences` after you toggle the
+# matching control once. Confirm a key exists before adding it here:
+#   dotbrowser vivaldi settings dump <key>
+
+[settings]
+
+# UI density / tabs.
+"vivaldi.tabs.minimize"        = false  # Click active tab to minimize it
+"vivaldi.status_bar.display"   = 1      # 0=off / 1=on / 2=overlay
+"vivaldi.status_bar.minimized" = 0      # 0=normal / 1=minimized status bar
+"vivaldi.tabs.bar.position"    = 1      # 0=top / 1=bottom / 2=left / 3=right
+"vivaldi.menu.compact"         = true   # Compact application menu

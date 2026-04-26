@@ -10,7 +10,7 @@ Manage your browser as a dotfile. Keep Brave shortcuts and UI tweaks in a single
 
 ## Quick start
 
-The repo ships an opinionated [`examples/brave.toml`](examples/brave.toml): vertical tabs collapsed to icons, decluttered new tab page, stripped-down toolbar, vim-style hjkl shortcuts.
+The repo ships opinionated examples under [`examples/brave/`](examples/brave/): vertical tabs collapsed to icons, decluttered new tab page, stripped-down toolbar, vim-style hjkl shortcuts. [`all.toml`](examples/brave/all.toml) bundles all three namespaces; [`shortcuts.toml`](examples/brave/shortcuts.toml), [`settings.toml`](examples/brave/settings.toml), and [`pwa.toml`](examples/brave/pwa.toml) are single-namespace variants if you only want one slice.
 
 ![Brave with the minimal config — empty new tab page, vertical tabs collapsed to icons, decluttered toolbar](docs/img/minimal-brave.png)
 
@@ -18,17 +18,17 @@ No clone, no install — `apply` accepts a URL directly. Fetched payloads are ec
 
 ```bash
 uvx dotbrowser brave apply --dry-run \
-  https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+  https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 
 # Apply (SIGKILLs Brave + restarts)
 uvx dotbrowser brave apply -k \
-  https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+  https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 ```
 
 Prefer to inspect / customise locally first? Download then apply:
 
 ```bash
-curl -fsSL -o brave.toml https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+curl -fsSL -o brave.toml https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 # edit brave.toml ...
 uvx dotbrowser brave apply brave.toml -k
 ```
@@ -120,7 +120,7 @@ dotbrowser brave -r /custom/path -p "Profile 1" apply brave.toml
 ```bash
 dotbrowser brave apply brave.toml --dry-run
 dotbrowser brave apply brave.toml -k
-dotbrowser brave apply -k https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave.toml
+dotbrowser brave apply -k https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 ```
 
 ### `shortcuts dump` — emit current shortcuts as TOML

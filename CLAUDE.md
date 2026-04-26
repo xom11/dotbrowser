@@ -15,7 +15,7 @@ pip install -e ".[test]"
 PYTHONPATH=src python -m dotbrowser <args>
 
 # Apply both [shortcuts] and [settings] from a single TOML file
-dotbrowser brave apply examples/brave.toml
+dotbrowser brave apply examples/brave/all.toml
 
 # Read-only inspection lives under each module
 dotbrowser brave shortcuts list

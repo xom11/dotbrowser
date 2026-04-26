@@ -1,0 +1,27 @@
+# `dotbrowser vivaldi apply` — keyboard shortcut overrides only.
+# Format: lowercase tokens joined by `+`. The `meta+` prefix means Cmd on
+# macOS and Win/Super on Linux/Windows — Vivaldi uses the same spelling
+# everywhere, so configs are portable across platforms.
+#
+# Discover command names with: `dotbrowser vivaldi shortcuts list [filter]`.
+
+[shortcuts]
+
+# Tab management. The TAB_SWITCH_*_HISTORY pair walks tabs in MRU
+# (most-recently-used) order — what most users mean by "next/previous tab".
+# Use TAB_SWITCH_*_ORDER for left-to-right strip order instead.
+COMMAND_NEW_TAB                    = ["meta+t"]
+COMMAND_CLOSE_TAB                  = ["meta+w"]
+COMMAND_TAB_REOPEN_RECENTLY_CLOSED = ["shift+meta+t"]
+COMMAND_TAB_SWITCH_FORWARD_HISTORY = ["ctrl+tab"]
+COMMAND_TAB_SWITCH_BACK_HISTORY    = ["ctrl+shift+tab"]
+
+# Address bar / search / find-in-page
+COMMAND_FOCUS_ADDRESSFIELD = ["meta+l"]
+COMMAND_FOCUS_SEARCHFIELD  = ["meta+e", "meta+k"]
+COMMAND_FIND_IN_PAGE       = ["meta+f"]
+
+# History / downloads / bookmarks
+COMMAND_ADD_BOOKMARK         = ["meta+d"]
+COMMAND_SHOW_DOWNLOADS_PANEL = ["meta+j"]
+COMMAND_SHOW_HISTORY         = ["meta+y"]

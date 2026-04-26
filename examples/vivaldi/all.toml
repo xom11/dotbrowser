@@ -1,0 +1,43 @@
+# `dotbrowser vivaldi apply` — all three namespaces in one file.
+# One apply = one backup + write cycle. See ./shortcuts.toml,
+# ./settings.toml, ./pwa.toml for single-namespace variants.
+#
+# Table semantics:
+#   - missing header  → module skipped, managed entries left alone.
+#   - empty body      → all previously-managed entries reset / popped.
+
+[shortcuts]
+
+# Tab management — *_HISTORY = MRU order, *_ORDER = strip order.
+COMMAND_NEW_TAB                    = ["meta+t"]
+COMMAND_CLOSE_TAB                  = ["meta+w"]
+COMMAND_TAB_REOPEN_RECENTLY_CLOSED = ["shift+meta+t"]
+COMMAND_TAB_SWITCH_FORWARD_HISTORY = ["ctrl+tab"]
+COMMAND_TAB_SWITCH_BACK_HISTORY    = ["ctrl+shift+tab"]
+
+# Address bar / search / find-in-page
+COMMAND_FOCUS_ADDRESSFIELD = ["meta+l"]
+COMMAND_FOCUS_SEARCHFIELD  = ["meta+e", "meta+k"]
+COMMAND_FIND_IN_PAGE       = ["meta+f"]
+
+# History / downloads / bookmarks
+COMMAND_ADD_BOOKMARK         = ["meta+d"]
+COMMAND_SHOW_DOWNLOADS_PANEL = ["meta+j"]
+COMMAND_SHOW_HISTORY         = ["meta+y"]
+
+[settings]
+
+# UI density / tabs.
+"vivaldi.tabs.minimize"        = false
+"vivaldi.status_bar.display"   = 1      # 0=off / 1=on / 2=overlay
+"vivaldi.status_bar.minimized" = 0      # 0=normal / 1=minimized status bar
+"vivaldi.tabs.bar.position"    = 1      # 0=top / 1=bottom / 2=left / 3=right
+"vivaldi.menu.compact"         = true
+
+# [pwa] — left commented out so the quick-start `apply` doesn't pull in
+# extra apps + a sudo prompt. See ./pwa.toml for a working example.
+#
+# [pwa]
+# urls = [
+#   "https://squoosh.app/",
+# ]

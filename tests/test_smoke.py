@@ -16,7 +16,7 @@ import pytest
 from dotbrowser.brave import DEFAULT_PROFILE_ROOT
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE_CFG = REPO_ROOT / "examples" / "brave.toml"
+EXAMPLE_CFG = REPO_ROOT / "examples" / "brave" / "all.toml"
 
 requires_brave_profile = pytest.mark.skipif(
     DEFAULT_PROFILE_ROOT is None
@@ -69,7 +69,7 @@ def test_dump_real_profile_succeeds() -> None:
 
 @requires_brave_profile
 def test_dry_run_apply_real_profile_does_not_write() -> None:
-    assert EXAMPLE_CFG.exists(), "examples/brave.toml is part of the repo"
+    assert EXAMPLE_CFG.exists(), "examples/brave/all.toml is part of the repo"
     real_prefs = DEFAULT_PROFILE_ROOT / "Default" / "Preferences"
     before = real_prefs.read_bytes()
     r = _run("brave", "apply", str(EXAMPLE_CFG), "--dry-run")
