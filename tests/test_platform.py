@@ -81,9 +81,9 @@ def test_default_profile_root_linux_prefers_direct_install_over_snap(
 def test_default_profile_root_linux_falls_back_to_direct_when_neither_populated(
     monkeypatch, tmp_path
 ) -> None:
-    """Brand-new machine with neither install populated: return the .deb
-    path so the eventual `Preferences not found at ...` error message
-    points at the location most users would expect."""
+    """Brand-new machine with no install populated: return the .deb path
+    so the eventual `Preferences not found at ...` error message points
+    at the location most users would expect."""
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     deb_root = tmp_path / ".config" / "BraveSoftware" / "Brave-Browser"
@@ -91,6 +91,90 @@ def test_default_profile_root_linux_falls_back_to_direct_when_neither_populated(
     import dotbrowser.brave as brave_pkg
     importlib.reload(brave_pkg)
     assert brave_pkg._default_profile_root() == deb_root
+
+
+def test_default_profile_root_linux_picks_flatpak_when_only_flatpak_has_data(
+    monkeypatch, tmp_path
+) -> None:
+    """Flatpak Brave puts its profile under `~/.var/app/com.brave.Browser/
+    config/...`. Auto-detect it the same way we do Snap."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    flatpak_root = (
+        tmp_path / ".var" / "app" / "com.brave.Browser" / "config"
+        / "BraveSoftware" / "Brave-Browser"
+    )
+    _make_brave_profile(flatpak_root)
+
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+    assert brave_pkg._default_profile_root() == flatpak_root
+
+
+def test_restart_uses_flatpak_run_for_flatpak_brave(monkeypatch) -> None:
+    """A captured cmdline starting with `/app/brave/...` came from inside
+    a Flatpak bwrap sandbox and the path is unreachable from the host.
+    Restart has to go back through `flatpak run com.brave.Browser`."""
+    monkeypatch.setattr("sys.platform", "linux")
+    from dotbrowser.brave import utils
+    importlib.reload(utils)
+
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+    monkeypatch.setattr(utils.subprocess, "Popen", FakePopen)
+    used = utils.restart_brave([
+        "/app/brave/brave",
+        "--disable-features=Foo",
+        "--no-first-run",
+    ])
+    assert used[0] == "flatpak"
+    assert used[1] == "run"
+    assert used[2] == "com.brave.Browser"
+    assert "--disable-features=Foo" in used
+    assert captured["cmd"] == used
+
+
+def test_pwa_refuses_snap_install(tmp_path) -> None:
+    """`[pwa]` writes to /etc/brave/policies/managed/, which Snap's
+    sandbox doesn't read — refuse upfront so users don't get a sudo
+    prompt that silently has no effect."""
+    from dotbrowser.brave import pwa
+    snap_prefs = (
+        tmp_path / "snap" / "brave" / "current" / ".config" / "BraveSoftware"
+        / "Brave-Browser" / "Default" / "Preferences"
+    )
+    with pytest.raises(SystemExit) as exc:
+        pwa.plan_apply(snap_prefs, {}, {"urls": ["https://squoosh.app/"]})
+    assert "Snap" in str(exc.value)
+
+
+def test_pwa_refuses_flatpak_install(tmp_path) -> None:
+    from dotbrowser.brave import pwa
+    flatpak_prefs = (
+        tmp_path / ".var" / "app" / "com.brave.Browser" / "config"
+        / "BraveSoftware" / "Brave-Browser" / "Default" / "Preferences"
+    )
+    with pytest.raises(SystemExit) as exc:
+        pwa.plan_apply(flatpak_prefs, {}, {"urls": ["https://squoosh.app/"]})
+    assert "Flatpak" in str(exc.value)
+
+
+def test_pwa_accepts_direct_install(tmp_path, monkeypatch) -> None:
+    """Direct .deb/.rpm/etc install must NOT be refused — that's the
+    primary supported path. Stub the policy read so the test doesn't
+    touch /etc/."""
+    from dotbrowser.brave import pwa
+    monkeypatch.setattr(pwa, "_read_current_policy", lambda: [])
+    deb_prefs = (
+        Path.home() / ".config" / "BraveSoftware" / "Brave-Browser"
+        / "Default" / "Preferences"
+    )
+    plan = pwa.plan_apply(deb_prefs, {}, {"urls": ["https://squoosh.app/"]})
+    assert plan.namespace == "pwa"
 
 
 @pytest.mark.parametrize(

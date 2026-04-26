@@ -160,13 +160,30 @@ def kill_brave_and_wait(timeout: float = 5.0) -> None:
     sys.exit(f"error: Brave still running after SIGKILL + {timeout}s wait")
 
 
+def _is_flatpak_brave_cmdline(captured_cmdline: list[str]) -> bool:
+    """Did the captured argv come from a Flatpak-sandboxed Brave?
+
+    Flatpak's bwrap presents the sandbox filesystem to the inner process,
+    so the main Brave executable reports its path as `/app/brave/brave` —
+    a path that only exists inside the sandbox. Re-launching that path
+    from the host fails with ENOENT, so we have to go back through
+    `flatpak run com.brave.Browser` instead.
+    """
+    return bool(captured_cmdline) and captured_cmdline[0].startswith("/app/brave/")
+
+
 def restart_brave(captured_cmdline: list[str]) -> list[str]:
     """Restart Brave the way the OS expects.
 
-    Linux: prefer the `brave-browser` wrapper script in PATH. It sets
-    `CHROME_WRAPPER` and fixes PATH for xdg utilities (default-browser
-    registration, URL handlers); launching the inner binary directly
-    silently breaks those.
+    Linux direct install: prefer the `brave-browser` wrapper script in
+    PATH. It sets `CHROME_WRAPPER` and fixes PATH for xdg utilities
+    (default-browser registration, URL handlers); launching the inner
+    binary directly silently breaks those.
+
+    Linux Flatpak: the captured argv[0] is `/app/brave/brave` (a path
+    only resolvable inside the bwrap sandbox), so we have to relaunch
+    through `flatpak run com.brave.Browser`. Flags that were on the
+    original cmdline are passed through.
 
     macOS: launch through `open -a "Brave Browser"` so Launch Services
     starts the .app bundle properly (re-registers URL handlers, restores
@@ -180,6 +197,8 @@ def restart_brave(captured_cmdline: list[str]) -> list[str]:
         forwarded = captured_cmdline[1:]
         if forwarded:
             cmdline += ["--args", *forwarded]
+    elif _is_flatpak_brave_cmdline(captured_cmdline):
+        cmdline = ["flatpak", "run", "com.brave.Browser", *captured_cmdline[1:]]
     else:
         wrapper = shutil.which("brave-browser") or shutil.which("brave")
         if wrapper:

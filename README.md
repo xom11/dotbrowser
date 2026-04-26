@@ -188,8 +188,8 @@ Default profile root: `~/.config/BraveSoftware/Brave-Browser` on Linux, `~/Libra
 | `.rpm` (Fedora / RHEL dnf repo) | yes | yes | yes | Same paths as `.deb` (Chromium upstream convention). |
 | Arch / `pacman` | yes | yes | yes | Same. |
 | NixOS (`pkgs.brave`) | yes | yes | yes | Same. |
-| **Snap** (`sudo snap install brave`) | yes (probes `~/snap/brave/current/.config/...`) | yes | **no** — sandbox doesn't read `/etc/brave/policies/managed/` | Use `.deb` for `[pwa]` support. |
-| **Flatpak** (`flathub com.brave.Browser`) | no — pass `--profile-root ~/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser` | no — process detection breaks (runs inside `bwrap`) | no | `dump`/`list` work with `--profile-root`; `apply` not recommended. Use `.deb`. |
+| **Snap** (`sudo snap install brave`) | yes (probes `~/snap/brave/current/.config/...`) | yes | **refused with clear error** — sandbox doesn't read `/etc/brave/policies/managed/` | Use `.deb` for `[pwa]` support. |
+| **Flatpak** (`flathub com.brave.Browser`) | yes (probes `~/.var/app/com.brave.Browser/config/...`) | yes — the inner brave binary is still named `brave` so `pgrep -x` matches; restart goes back through `flatpak run com.brave.Browser` | **refused with clear error** — same sandbox limitation as Snap | Use `.deb` for `[pwa]` support. |
 | **macOS** `.dmg` | yes | yes | yes | Includes the cfprefsd cache invalidation needed for `[pwa]`. |
 
 Dual-install machines (e.g. `.deb` + Snap installed side-by-side) prefer the direct-install profile, matching what `which brave-browser` resolves to.

@@ -109,6 +109,31 @@ def _check_platform_supported() -> None:
         )
 
 
+def _check_install_supported(prefs_path: Path) -> None:
+    """Refuse `[pwa]` on Snap and Flatpak — both run inside sandboxes
+    that don't read `/etc/brave/policies/managed/`, so a sudo write to
+    that path would silently have no effect on next browser launch.
+    Profile path is the cleanest signal we have for which install
+    method is in use; the user can still use shortcuts/settings on a
+    sandboxed Brave, just not pwa.
+    """
+    p = str(prefs_path)
+    if "/snap/brave/" in p:
+        sys.exit(
+            "error: [pwa] is not supported on Snap Brave (the sandbox does "
+            "not read /etc/brave/policies/managed/). Install Brave from the "
+            "official .deb (Debian/Ubuntu) or .rpm (Fedora/RHEL) repo for "
+            "[pwa] support, or remove the [pwa] table from your config."
+        )
+    if "/.var/app/com.brave.Browser/" in p:
+        sys.exit(
+            "error: [pwa] is not supported on Flatpak Brave (the sandbox "
+            "does not read /etc/brave/policies/managed/). Install Brave "
+            "from the official .deb or .rpm repo for [pwa] support, or "
+            "remove the [pwa] table from your config."
+        )
+
+
 def _validate_table(raw: object) -> list[str]:
     """Pull the URL list out of a parsed `[pwa]` table.
 
@@ -285,12 +310,12 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     prefs side fails for an unrelated reason (e.g. settings refusal in a
     combined apply), we don't escalate to sudo for nothing.
 
-    `prefs_path` is accepted for signature symmetry with the other
-    modules but is unused: the policy file path is platform-derived,
-    not profile-relative.
+    `prefs_path` drives the install-method check (sandbox installs like
+    Snap and Flatpak can't apply pwa policies); the policy file path
+    itself is platform-derived, not profile-relative.
     """
     _check_platform_supported()
-    _ = prefs_path  # signature symmetry with shortcuts/settings
+    _check_install_supported(prefs_path)
 
     target_urls = _validate_table(raw_table)
     current = _read_current_policy()
