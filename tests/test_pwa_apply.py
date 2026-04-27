@@ -179,11 +179,13 @@ def test_validate_rejects_non_string_url_entries() -> None:
         pwa._validate_table({"urls": [123]})
 
 
-def test_validate_rejects_non_http_urls() -> None:
-    with pytest.raises(SystemExit, match=r"must start with http"):
+def test_validate_rejects_non_https_urls() -> None:
+    with pytest.raises(SystemExit, match=r"must start with https://"):
         pwa._validate_table({"urls": ["javascript:alert(1)"]})
-    with pytest.raises(SystemExit, match=r"must start with http"):
+    with pytest.raises(SystemExit, match=r"must start with https://"):
         pwa._validate_table({"urls": ["squoosh.app"]})  # missing scheme
+    with pytest.raises(SystemExit, match=r"must start with https://"):
+        pwa._validate_table({"urls": ["http://example.com/"]})  # plain http
 
 
 def test_validate_rejects_unknown_keys() -> None:

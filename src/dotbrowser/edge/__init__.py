@@ -68,7 +68,7 @@ def _build_plans(prefs_path: Path, prefs: dict, doc: dict) -> list[Plan]:
 
 _INIT_TEMPLATE = """\
 # dotbrowser -- Microsoft Edge configuration
-# Docs: https://github.com/nichochar/dotbrowser
+# Docs: https://github.com/xom11/dotbrowser
 # Inspect current settings:  dotbrowser edge settings dump
 #
 # Apply this file:

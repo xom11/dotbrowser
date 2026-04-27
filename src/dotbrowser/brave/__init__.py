@@ -122,7 +122,7 @@ def _build_plans(prefs_path: Path, prefs: dict, doc: dict) -> list[Plan]:
 
 _INIT_TEMPLATE = """\
 # dotbrowser -- Brave configuration
-# Docs: https://github.com/nichochar/dotbrowser
+# Docs: https://github.com/xom11/dotbrowser
 # List available shortcut names:  dotbrowser brave shortcuts list
 # Inspect current settings:       dotbrowser brave settings dump
 #

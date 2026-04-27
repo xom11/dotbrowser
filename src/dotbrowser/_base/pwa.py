@@ -91,8 +91,8 @@ def validate_table(raw: object) -> list[str]:
     for u in urls:
         if not isinstance(u, str):
             sys.exit(f"error: [pwa] url entries must be strings, got {type(u).__name__}")
-        if not u.startswith(("http://", "https://")):
-            sys.exit(f"error: [pwa] invalid url {u!r} (must start with http:// or https://)")
+        if not u.startswith("https://"):
+            sys.exit(f"error: [pwa] invalid url {u!r} (must start with https://)")
         if u in seen:
             continue
         seen.add(u)
