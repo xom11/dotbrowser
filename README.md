@@ -196,6 +196,20 @@ dotbrowser brave settings dump
 dotbrowser edge  settings dump browser.show_home_button bookmark_bar.show_on_all_tabs
 ```
 
+### `settings blocked` — list MAC-protected keys `apply` will refuse
+
+Walks `protection.macs` in your profile and prints every tracked pref path as commented TOML, with the current value when present. Use this to learn upfront which keys (e.g. `homepage`, `default_search_provider_data.template_url_data`, `session.startup_urls`) you need to set via the browser UI instead of the config.
+
+| Flag | What it does |
+|---|---|
+| `-o, --output FILE` | Write to FILE instead of stdout. |
+
+```bash
+dotbrowser brave   settings blocked
+dotbrowser vivaldi settings blocked
+dotbrowser edge    settings blocked
+```
+
 ### `pwa dump` — emit currently-managed PWA URLs as TOML
 
 Reads the managed-policy source for that browser (Linux: `/etc/<browser>/policies/managed/dotbrowser-pwa.json`; macOS: `/Library/Managed Preferences/<bundle-id>.plist`; Windows: `HKLM\Software\Policies\<vendor>\<browser>\WebAppInstallForceList`) and prints a `[pwa]` table you can paste straight into your config. All sources are readable without elevation.

@@ -34,5 +34,9 @@ def cmd_dump(args: argparse.Namespace) -> None:
     _base.cmd_dump("brave", args)
 
 
+def cmd_blocked(args: argparse.Namespace) -> None:
+    _base.cmd_blocked("brave", args)
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     _base.register("brave", subparsers)

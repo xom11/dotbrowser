@@ -25,6 +25,7 @@ dotbrowser brave apply examples/brave/all.toml
 dotbrowser brave shortcuts list
 dotbrowser brave shortcuts dump
 dotbrowser brave settings dump
+dotbrowser brave settings blocked       # MAC-protected keys `apply` refuses
 dotbrowser brave pwa dump
 
 # Same commands work for vivaldi and edge
@@ -78,8 +79,9 @@ _base/process.py      -> BrowserProcess class: parameterized process
                          detection, kill, restart per platform. Each
                          browser creates one instance with its names/paths.
 _base/settings.py     -> Full settings module logic (MAC refusal,
-                         plan_apply, cmd_dump, register). Browser modules
-                         pass browser_name for user-facing strings.
+                         plan_apply, cmd_dump, cmd_blocked, register).
+                         Browser modules pass browser_name for
+                         user-facing strings.
 _base/pwa.py          -> Full PWA logic (validation, diff, policy
                          read/write, plan_apply). Browser modules provide
                          PwaConfig with paths and keep module-level

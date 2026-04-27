@@ -249,3 +249,52 @@ def test_dump_no_managed_errors(fake_settings_profile_root: Path) -> None:
     r = _run_cli(fake_settings_profile_root, "settings", "dump")
     assert r.returncode != 0
     assert "no managed keys" in (r.stdout + r.stderr)
+
+
+def test_blocked_lists_mac_protected_keys(
+    fake_settings_profile_root: Path,
+) -> None:
+    """`settings blocked` walks protection.macs and lists every tracked
+    leaf as commented TOML, with the current value when present."""
+    r = _run_cli(fake_settings_profile_root, "settings", "blocked")
+    assert r.returncode == 0, r.stderr
+
+    out = r.stdout
+    assert "MAC-protected" in out
+    assert "[settings]" in out
+    # Both tracked leaves from the fixture are listed.
+    assert '"browser.show_home_button"' in out
+    assert '"homepage"' in out
+    # Every key line is commented out -- the file is informational, not appliable.
+    for needle in ('"browser.show_home_button"', '"homepage"'):
+        line = next(l for l in out.splitlines() if needle in l)
+        assert line.lstrip().startswith("#"), f"expected comment for {needle}: {line!r}"
+    # Current values are surfaced so users know what to set in the UI.
+    assert "https://existing-home.example" in out
+    assert "true" in out  # browser.show_home_button
+
+
+def test_blocked_handles_no_protection_subtree(tmp_path: Path) -> None:
+    """A profile with no `protection.macs` should report cleanly,
+    not crash."""
+    profile = tmp_path / "Default"
+    profile.mkdir()
+    (profile / "Preferences").write_text(json.dumps({"some": "thing"}))
+
+    r = _run_cli(tmp_path, "settings", "blocked")
+    assert r.returncode == 0, r.stderr
+    assert "no MAC-protected keys" in r.stdout
+
+
+def test_blocked_writes_to_output_file(
+    fake_settings_profile_root: Path, tmp_path: Path
+) -> None:
+    out_file = tmp_path / "blocked.toml"
+    r = _run_cli(
+        fake_settings_profile_root, "settings", "blocked", "-o", str(out_file)
+    )
+    assert r.returncode == 0, r.stderr
+    assert out_file.exists()
+    content = out_file.read_text()
+    assert '"browser.show_home_button"' in content
+    assert '"homepage"' in content

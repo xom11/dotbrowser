@@ -30,5 +30,9 @@ def cmd_dump(args: argparse.Namespace) -> None:
     _base.cmd_dump("vivaldi", args)
 
 
+def cmd_blocked(args: argparse.Namespace) -> None:
+    _base.cmd_blocked("vivaldi", args)
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     _base.register("vivaldi", subparsers)

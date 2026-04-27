@@ -19,5 +19,9 @@ def cmd_dump(args: argparse.Namespace) -> None:
     _base.cmd_dump("edge", args)
 
 
+def cmd_blocked(args: argparse.Namespace) -> None:
+    _base.cmd_blocked("edge", args)
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     _base.register("edge", subparsers)
