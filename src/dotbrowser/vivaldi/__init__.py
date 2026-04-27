@@ -22,6 +22,7 @@ from pathlib import Path
 from dotbrowser._base.orchestrator import (
     cmd_apply as _base_cmd_apply,
     cmd_init as _base_cmd_init,
+    cmd_restore as _base_cmd_restore,
     register_browser,
 )
 from dotbrowser._base.utils import Plan
@@ -132,6 +133,18 @@ def cmd_init(args: argparse.Namespace) -> None:
     _base_cmd_init(args, "vivaldi", _INIT_TEMPLATE)
 
 
+def cmd_restore(args: argparse.Namespace) -> None:
+    _base_cmd_restore(
+        args,
+        display_name="Vivaldi",
+        running_fn=vivaldi_running,
+        pids_fn=_vivaldi_pids,
+        find_cmdline_fn=find_main_vivaldi_cmdline,
+        kill_fn=kill_vivaldi_and_wait,
+        restart_fn=restart_vivaldi,
+    )
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     register_browser(
         subparsers,
@@ -140,6 +153,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default_profile_root=DEFAULT_PROFILE_ROOT,
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,
+        cmd_restore_fn=cmd_restore,
         module_registers=[
             shortcuts_mod.register,
             settings_mod.register,

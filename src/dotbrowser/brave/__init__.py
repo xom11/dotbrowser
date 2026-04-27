@@ -22,6 +22,7 @@ from pathlib import Path
 from dotbrowser._base.orchestrator import (
     cmd_apply as _base_cmd_apply,
     cmd_init as _base_cmd_init,
+    cmd_restore as _base_cmd_restore,
     register_browser,
 )
 from dotbrowser._base.utils import Plan
@@ -257,6 +258,39 @@ def cmd_init(args: argparse.Namespace) -> None:
     _base_cmd_init(args, "brave", _INIT_TEMPLATE)
 
 
+def cmd_restore(args: argparse.Namespace) -> None:
+    """Restore Preferences from an apply-time backup.
+
+    Resolves process callbacks the same way ``cmd_apply`` does so the
+    Linux non-stable channel filter (and macOS app-name distinction)
+    are honored when killing the right Brave install.
+    """
+    channel = getattr(args, "channel", "stable")
+    if channel == "stable":
+        _base_cmd_restore(
+            args,
+            display_name="Brave",
+            running_fn=brave_running,
+            pids_fn=_brave_pids,
+            find_cmdline_fn=find_main_brave_cmdline,
+            kill_fn=kill_brave_and_wait,
+            restart_fn=restart_brave,
+        )
+        return
+
+    from dotbrowser.brave.utils import _make_browser_process
+    proc = _make_browser_process(channel)
+    _base_cmd_restore(
+        args,
+        display_name=proc.display_name,
+        running_fn=proc.running,
+        pids_fn=proc.pids,
+        find_cmdline_fn=proc.find_main_cmdline,
+        kill_fn=proc.kill_and_wait,
+        restart_fn=proc.restart,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -269,6 +303,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default_profile_root=DEFAULT_PROFILE_ROOT,
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,
+        cmd_restore_fn=cmd_restore,
         module_registers=[
             shortcuts_mod.register,
             settings_mod.register,
