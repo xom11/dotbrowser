@@ -30,6 +30,9 @@ else:
 from dotbrowser._base.utils import Plan, find_preferences, load_prefs, write_atomic
 
 
+_MAX_URL_CONFIG_BYTES = 256 * 1024
+
+
 def _load_toml(path: Path) -> dict:
     with path.open("rb") as f:
         return tomllib.load(f)
@@ -39,25 +42,63 @@ def _looks_like_url(value: object) -> bool:
     return isinstance(value, str) and value.startswith(("http://", "https://"))
 
 
-def _load_toml_from_url(url: str) -> dict:
+def _load_toml_from_url(
+    url: str,
+    *,
+    allow_http: bool = False,
+    expect_sha256: str | None = None,
+) -> dict:
+    if url.startswith("http://") and not allow_http:
+        sys.exit(
+            f"error: refusing to fetch config over plain http: {url}\n"
+            "  HTTP responses can be modified by anyone on the network and "
+            "could inject\n"
+            "  a malicious [pwa] table that runs through sudo. Use https:// "
+            "or pass\n"
+            "  --allow-http to opt in (e.g. for a trusted intranet host)."
+        )
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
-            data = resp.read()
+            data = resp.read(_MAX_URL_CONFIG_BYTES + 1)
     except urllib.error.URLError as e:
         sys.exit(f"error: failed to fetch {url}: {e.reason}")
+    if len(data) > _MAX_URL_CONFIG_BYTES:
+        sys.exit(
+            f"error: config from {url} exceeds the {_MAX_URL_CONFIG_BYTES}-byte "
+            f"limit. If this is intentional, fetch the file locally and pass "
+            f"the path instead."
+        )
+    digest = hashlib.sha256(data).hexdigest()
     print(f"source: {url}")
     print(f"  size:   {len(data)} bytes")
-    print(f"  sha256: {hashlib.sha256(data).hexdigest()}")
+    print(f"  sha256: {digest}")
+    if expect_sha256 is not None:
+        want = expect_sha256.strip().lower()
+        if digest != want:
+            sys.exit(
+                f"error: sha256 mismatch for {url}\n"
+                f"  expected: {want}\n"
+                f"  got:      {digest}\n"
+                "  refusing to apply -- the file may have changed or been "
+                "tampered with."
+            )
     try:
         return tomllib.loads(data.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         sys.exit(f"error: failed to parse TOML from {url}: {e}")
 
 
-def load_toml_source(src: str) -> dict:
+def load_toml_source(
+    src: str,
+    *,
+    allow_http: bool = False,
+    expect_sha256: str | None = None,
+) -> dict:
     """Load a TOML config from a file path or URL."""
     if _looks_like_url(src):
-        return _load_toml_from_url(src)
+        return _load_toml_from_url(
+            src, allow_http=allow_http, expect_sha256=expect_sha256
+        )
     return _load_toml(Path(src))
 
 
@@ -79,7 +120,11 @@ def cmd_apply(
     module's function names takes effect.
     """
     prefs_path = find_preferences(args.profile_root, args.profile)
-    doc = load_toml_source(args.config)
+    doc = load_toml_source(
+        args.config,
+        allow_http=getattr(args, "allow_http", False),
+        expect_sha256=getattr(args, "expect_sha256", None),
+    )
     if not isinstance(doc, dict):
         sys.exit("error: TOML root must be a table")
 
@@ -275,7 +320,22 @@ def register_browser(
     )
     a.add_argument(
         "config",
-        help="path to a local TOML file, or http(s):// URL to fetch one",
+        help="path to a local TOML file, or https:// URL to fetch one "
+        "(http:// is refused unless --allow-http is set)",
+    )
+    a.add_argument(
+        "--expect-sha256",
+        metavar="HEX",
+        default=None,
+        help="when fetching a URL, refuse to apply unless the response sha256 "
+        "matches this hex digest",
+    )
+    a.add_argument(
+        "--allow-http",
+        action="store_true",
+        help="allow fetching configs over plain http:// (NOT recommended; the "
+        "response can be modified in transit and a malicious [pwa] table "
+        "would run through sudo)",
     )
     a.add_argument("-n", "--dry-run", action="store_true")
     a.add_argument(
