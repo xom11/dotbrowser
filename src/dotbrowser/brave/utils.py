@@ -3,7 +3,7 @@
 Process detection / kill / restart, atomic JSON writes, and small dict
 utilities used by both `shortcuts` and `settings`. Keeping these in a
 single module means there is exactly one place that knows how Brave's
-process layout differs between Linux and macOS.
+process layout differs between Linux, macOS, and Windows.
 """
 from __future__ import annotations
 
@@ -65,19 +65,56 @@ def _is_macos() -> bool:
     return sys.platform == "darwin"
 
 
+def _is_windows() -> bool:
+    return sys.platform == "win32"
+
+
 def _brave_proc_name() -> str:
-    """The exact basename `pgrep -x` matches against.
+    """The process name used for detection and killing.
 
     On Linux the main binary is `brave` (the `brave-browser` wrapper exec's
     into it). On macOS the executable inside the .app bundle is literally
     `Brave Browser` with a space — Helper processes use a different name
     (`Brave Browser Helper`, `Brave Browser Helper (GPU)`, ...) so `pgrep -x`
-    on the exact name already excludes them.
+    on the exact name already excludes them. On Windows the executable is
+    `brave.exe`; `tasklist /FI "IMAGENAME eq brave.exe"` matches it.
     """
-    return "Brave Browser" if _is_macos() else "brave"
+    if _is_macos():
+        return "Brave Browser"
+    if _is_windows():
+        return "brave.exe"
+    return "brave"
+
+
+def _brave_pids_windows() -> list[str]:
+    """Get Brave PIDs using ``tasklist`` on Windows.
+
+    ``tasklist /FO CSV /NH`` emits one CSV line per process::
+
+        "brave.exe","14796","Console","1","288,820 K"
+
+    We parse the PID from the second field.
+    """
+    try:
+        out = subprocess.check_output(
+            ["tasklist", "/FI", f"IMAGENAME eq {_brave_proc_name()}",
+             "/FO", "CSV", "/NH"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    pids: list[str] = []
+    for line in out.decode("utf-8", "replace").strip().splitlines():
+        if line.startswith(f'"{_brave_proc_name()}"'):
+            parts = line.split(",")
+            if len(parts) >= 2:
+                pids.append(parts[1].strip('"'))
+    return pids
 
 
 def brave_running() -> bool:
+    if _is_windows():
+        return bool(_brave_pids_windows())
     try:
         subprocess.check_output(
             ["pgrep", "-x", _brave_proc_name()], stderr=subprocess.DEVNULL
@@ -88,6 +125,8 @@ def brave_running() -> bool:
 
 
 def _brave_pids() -> list[str]:
+    if _is_windows():
+        return _brave_pids_windows()
     try:
         out = subprocess.check_output(
             ["pgrep", "-x", _brave_proc_name()], stderr=subprocess.DEVNULL
@@ -100,18 +139,35 @@ def _brave_pids() -> list[str]:
 def _read_cmdline(pid: str) -> list[str] | None:
     """Recover the command-line argv for a running Brave process.
 
-    Linux: read `/proc/<pid>/cmdline`. Chromium subprocesses overwrite their
-    argv region (setproctitle-style) and lose null separators, leaving a
-    single space-joined string — fall back to `shlex.split` in that case.
+    Windows: PowerShell ``Get-CimInstance Win32_Process`` returns the full
+    command line. Returned as a single-element list (same as macOS) because
+    Windows paths use backslashes that ``shlex.split`` would mangle.
 
-    macOS: no `/proc`. `ps -o command= -p <pid>` returns the full command
+    macOS: no ``/proc``. ``ps -o command= -p <pid>`` returns the full command
     line as a single line, but the executable path itself contains
-    unescaped spaces (`/Applications/Brave Browser.app/Contents/MacOS/Brave
-    Browser`) so `shlex.split` would corrupt it. We return the line as a
+    unescaped spaces (``/Applications/Brave Browser.app/Contents/MacOS/Brave
+    Browser``) so ``shlex.split`` would corrupt it. We return the line as a
     single-element list — that's enough for the "did we capture anything?"
     signal that drives restart, and the macOS restart path doesn't need the
-    parsed argv anyway (it relaunches via `open -a "Brave Browser"`).
+    parsed argv anyway (it relaunches via ``open -a "Brave Browser"``).
+
+    Linux: read ``/proc/<pid>/cmdline``. Chromium subprocesses overwrite their
+    argv region (setproctitle-style) and lose null separators, leaving a
+    single space-joined string — fall back to ``shlex.split`` in that case.
     """
+    if _is_windows():
+        try:
+            out = subprocess.check_output(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine",
+                ],
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+        line = out.decode("utf-8", "replace").strip()
+        return [line] if line else None
     if _is_macos():
         try:
             out = subprocess.check_output(
@@ -149,15 +205,22 @@ def find_main_brave_cmdline() -> list[str] | None:
 
 
 def kill_brave_and_wait(timeout: float = 5.0) -> None:
-    subprocess.run(
-        ["pkill", "-KILL", "-x", _brave_proc_name()], stderr=subprocess.DEVNULL
-    )
+    if _is_windows():
+        subprocess.run(
+            ["taskkill", "/F", "/IM", _brave_proc_name()],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        subprocess.run(
+            ["pkill", "-KILL", "-x", _brave_proc_name()], stderr=subprocess.DEVNULL
+        )
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not brave_running():
             return
         time.sleep(0.1)
-    sys.exit(f"error: Brave still running after SIGKILL + {timeout}s wait")
+    sys.exit(f"error: Brave still running after force-kill + {timeout}s wait")
 
 
 def _is_flatpak_brave_cmdline(captured_cmdline: list[str]) -> bool:
@@ -175,24 +238,37 @@ def _is_flatpak_brave_cmdline(captured_cmdline: list[str]) -> bool:
 def restart_brave(captured_cmdline: list[str]) -> list[str]:
     """Restart Brave the way the OS expects.
 
-    Linux direct install: prefer the `brave-browser` wrapper script in
-    PATH. It sets `CHROME_WRAPPER` and fixes PATH for xdg utilities
+    Windows: launch ``brave.exe`` from the standard install location
+    (``%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe``).
+    No wrapper script exists on Windows — the executable is the entry
+    point. Falls back to the captured command line if the standard path
+    doesn't exist.
+
+    Linux direct install: prefer the ``brave-browser`` wrapper script in
+    PATH. It sets ``CHROME_WRAPPER`` and fixes PATH for xdg utilities
     (default-browser registration, URL handlers); launching the inner
     binary directly silently breaks those.
 
-    Linux Flatpak: the captured argv[0] is `/app/brave/brave` (a path
+    Linux Flatpak: the captured argv[0] is ``/app/brave/brave`` (a path
     only resolvable inside the bwrap sandbox), so we have to relaunch
-    through `flatpak run com.brave.Browser`. Flags that were on the
+    through ``flatpak run com.brave.Browser``. Flags that were on the
     original cmdline are passed through.
 
-    macOS: launch through `open -a "Brave Browser"` so Launch Services
+    macOS: launch through ``open -a "Brave Browser"`` so Launch Services
     starts the .app bundle properly (re-registers URL handlers, restores
-    dock state). Captured argv[1:] is forwarded via `--args` so any flags
+    dock state). Captured argv[1:] is forwarded via ``--args`` so any flags
     that were active stay active after restart.
 
     Returns the cmdline actually used (for logging).
     """
-    if _is_macos():
+    if _is_windows():
+        local = os.environ.get("LOCALAPPDATA", "")
+        known_exe = Path(local) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe"
+        if local and known_exe.exists():
+            cmdline = [str(known_exe)]
+        else:
+            cmdline = list(captured_cmdline)
+    elif _is_macos():
         cmdline = ["open", "-a", "Brave Browser"]
         forwarded = captured_cmdline[1:]
         if forwarded:

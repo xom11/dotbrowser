@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -66,20 +67,34 @@ def _default_profile_root() -> Path | None:
 
     Returns None for unsupported platforms; the CLI then requires
     --profile-root to be passed explicitly so that --help still works
-    on Windows / BSD / etc. without crashing at import time.
+    on BSD / etc. without crashing at import time.
+
+    Windows: ``%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data``.
+    The extra ``User Data`` segment is Windows-specific — on Linux / macOS
+    the profile root is the ``BraveSoftware/Brave-Browser`` directory
+    itself, but on Windows Chromium nests profiles one level deeper.
 
     Linux probes the three known install locations in priority order:
     direct install (.deb / .rpm / pacman / nix all share
-    `~/.config/BraveSoftware/Brave-Browser`), Snap, then Flatpak. Direct
+    ``~/.config/BraveSoftware/Brave-Browser``), Snap, then Flatpak. Direct
     install wins when more than one is populated — that matches what
-    `which brave-browser` resolves to on a dual-install machine. The
-    probe key is `Local State`: Chromium creates it on first launch, so
-    its presence is a reliable "this profile has been used" signal
-    independent of which `--profile` directory the user later targets.
+    ``which brave-browser`` resolves to on a dual-install machine.
+
+    The probe key is ``Local State``: Chromium creates it on first launch,
+    so its presence is a reliable "this profile has been used" signal
+    independent of which ``--profile`` directory the user later targets.
     """
     home = Path.home()
     if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "BraveSoftware" / "Brave-Browser"
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            candidate = Path(local_app_data) / "BraveSoftware" / "Brave-Browser" / "User Data"
+            if (candidate / "Local State").exists():
+                return candidate
+            return candidate
+        return None
     if sys.platform.startswith("linux"):
         candidates = (
             home / ".config" / "BraveSoftware" / "Brave-Browser",
@@ -202,23 +217,33 @@ def cmd_apply(args: argparse.Namespace) -> None:
     # (sudo treats `-v` as a forced reauthentication regardless of
     # NOPASSWD), so `-n true` is the only reliable "would sudo work?"
     # signal we can use here.
-    needs_sudo = any(
+    needs_escalation = any(
         p.external_apply_fn is not None and not p.empty for p in plans
     )
-    if needs_sudo:
-        cached = subprocess.run(
-            ["sudo", "-n", "true"], stderr=subprocess.DEVNULL
-        ).returncode == 0
-        if not cached:
-            try:
-                subprocess.run(["sudo", "-v"], check=True)
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    if needs_escalation:
+        if sys.platform == "win32":
+            import ctypes
+            if not ctypes.windll.shell32.IsUserAnAdmin():
                 sys.exit(
-                    "error: [pwa] requires sudo to write the managed-policy "
-                    f"file but auth failed: {e}\n"
-                    "(if running non-interactively, run `sudo -v` from a "
-                    "terminal first to cache credentials)"
+                    "error: [pwa] requires administrator privileges to write "
+                    "to the Windows Registry.\n"
+                    "Re-run this command from an elevated (Administrator) "
+                    "command prompt or PowerShell."
                 )
+        else:
+            cached = subprocess.run(
+                ["sudo", "-n", "true"], stderr=subprocess.DEVNULL
+            ).returncode == 0
+            if not cached:
+                try:
+                    subprocess.run(["sudo", "-v"], check=True)
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    sys.exit(
+                        "error: [pwa] requires sudo to write the managed-policy "
+                        f"file but auth failed: {e}\n"
+                        "(if running non-interactively, run `sudo -v` from a "
+                        "terminal first to cache credentials)"
+                    )
 
     saved_cmdline: list[str] | None = None
     brave_was_killed = False
@@ -227,7 +252,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
             sys.exit(
                 "error: Brave is running. Close it first, or pass --kill-browser\n"
                 "(Brave caches prefs in memory and overwrites the file on exit,\n"
-                "so editing while running is unreliable. --kill-browser SIGKILLs\n"
+                "so editing while running is unreliable. --kill-browser force-kills\n"
                 "Brave to prevent the flush, applies, then restarts it.)"
             )
         saved_cmdline = find_main_brave_cmdline()
@@ -314,7 +339,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "-k",
         "--kill-browser",
         action="store_true",
-        help="if Brave is running, SIGKILL it (so it can't flush in-memory "
+        help="if Brave is running, force-kill it (so it can't flush in-memory "
         "prefs over our changes), apply, then restart it",
     )
     a.set_defaults(func=cmd_apply)

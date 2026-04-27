@@ -9,21 +9,25 @@ to uninstall the app — a clean round-trip that matches dotbrowser's
 "TOML is source of truth" model already used by `[shortcuts]` and
 `[settings]`.
 
-The policy file lives outside the user's profile and requires `sudo` to
-write on both supported platforms:
+The policy lives outside the user's profile and requires elevated
+privileges on all supported platforms:
 
 - Linux: `/etc/brave/policies/managed/dotbrowser-pwa.json` (JSON,
   namespaced by filename so dotbrowser never collides with policies
-  installed by an MDM).
+  installed by an MDM). Requires sudo.
 - macOS: `/Library/Managed Preferences/com.brave.Browser.plist` (binary
   plist keyed by Brave's bundle ID — there is exactly one such file per
   app, so we *cannot* namespace by filename and must read-modify-write
   the single `WebAppInstallForceList` key while preserving any unrelated
-  MDM-managed keys in the same plist). Each write also kicks cfprefsd
-  with `sudo killall cfprefsd` so its in-memory cache picks up the new
-  file; without that step Brave silently launches with the *previous*
-  policy state because cfprefsd doesn't watch its backing files for
-  external changes (it assumes ownership of writes via its XPC API).
+  MDM-managed keys in the same plist). Requires sudo. Each write also
+  kicks cfprefsd with `sudo killall cfprefsd` so its in-memory cache
+  picks up the new file; without that step Brave silently launches with
+  the *previous* policy state because cfprefsd doesn't watch its backing
+  files for external changes (it assumes ownership of writes via its
+  XPC API).
+- Windows: registry at `HKLM\\Software\\Policies\\BraveSoftware\\Brave\\
+  WebAppInstallForceList` — numbered REG_SZ values ("1", "2", …), each
+  containing a JSON string for one entry. Requires administrator.
 
 The user-level macOS path (`~/Library/Preferences/com.brave.Browser.plist`
 via `defaults write`) was tested and rejected: Chromium classifies
@@ -59,11 +63,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+if sys.platform == "win32":
+    import winreg
+
 from dotbrowser.brave.utils import Plan, find_preferences
 
 NAMESPACE = "pwa"
 
 POLICY_KEY = "WebAppInstallForceList"
+
+# Windows stores Chromium policies in the registry, not a file.
+_WINDOWS_POLICY_KEY = r"Software\Policies\BraveSoftware\Brave"
 
 
 def _default_policy_file() -> Path | None:
@@ -96,16 +106,16 @@ _DEFAULT_ENTRY = {
 def _check_platform_supported() -> None:
     """Bail out clearly on platforms we haven't wired up yet.
 
-    Linux + macOS share schema, orchestration, validation, and diff
-    computation; they only diverge at serialization (JSON vs binary
-    plist) and file path. Windows would need a new path under
-    `HKLM\\Software\\Policies\\BraveSoftware\\Brave\\` (registry, not a
-    file) — not yet implemented.
+    Linux + macOS use file-based policies (JSON / binary plist).
+    Windows uses the registry under ``HKLM\\Software\\Policies\\
+    BraveSoftware\\Brave\\WebAppInstallForceList``.
     """
+    if sys.platform == "win32":
+        return  # Windows uses registry, not a file
     if POLICY_FILE is None:
         sys.exit(
             f"error: [pwa] is not yet implemented on platform={sys.platform!r}. "
-            f"Linux and macOS are supported."
+            f"Linux, macOS and Windows are supported."
         )
 
 
@@ -170,19 +180,64 @@ def _validate_table(raw: object) -> list[str]:
     return out
 
 
-def _read_existing_payload() -> dict:
-    """Return the full parsed policy file (whole dict), or `{}` if missing.
+def _read_windows_registry_payload() -> dict:
+    """Read ``WebAppInstallForceList`` entries from the Windows registry.
 
-    On macOS this dict may carry unrelated MDM keys that we have to
-    preserve when we round-trip — `_build_policy_payload` uses this to
-    merge our key without clobbering those. On Linux the file is
-    namespaced by filename so the result will only ever contain our key.
+    Chromium stores list-type policies as numbered REG_SZ values ("1",
+    "2", …) under a subkey named after the policy. Each value is a JSON
+    string representing one list entry.
 
-    Both formats are world-readable (mode 0644 / 0644 respectively), so
-    this runs without escalation. A malformed file is treated as empty
-    rather than fatal so a previous half-written run doesn't permanently
-    brick the apply path — the next write will replace it.
+    Returns a dict shaped like ``{POLICY_KEY: [entry, …]}`` so the rest
+    of the read path can treat it identically to the file-based payload.
+    Reading the registry does not require elevation.
     """
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            _WINDOWS_POLICY_KEY + "\\" + POLICY_KEY,
+            0,
+            winreg.KEY_READ,
+        )
+    except OSError:
+        return {}
+    entries: list[dict] = []
+    try:
+        i = 0
+        while True:
+            try:
+                _name, value, vtype = winreg.EnumValue(key, i)
+                if vtype == winreg.REG_SZ and value:
+                    try:
+                        parsed = json.loads(value)
+                        if isinstance(parsed, dict):
+                            entries.append(parsed)
+                    except json.JSONDecodeError:
+                        pass
+                i += 1
+            except OSError:
+                break
+    finally:
+        winreg.CloseKey(key)
+    return {POLICY_KEY: entries} if entries else {}
+
+
+def _read_existing_payload() -> dict:
+    """Return the full parsed policy data, or ``{}`` if missing.
+
+    On Windows reads from the registry. On macOS this dict may carry
+    unrelated MDM keys that we have to preserve when we round-trip —
+    ``_build_policy_payload`` uses this to merge our key without
+    clobbering those. On Linux the file is namespaced by filename so the
+    result will only ever contain our key.
+
+    Both file formats are world-readable (mode 0644) and the registry
+    key is readable without elevation, so this runs without escalation.
+    A malformed source is treated as empty rather than fatal so a
+    previous half-written run doesn't permanently brick the apply path —
+    the next write will replace it.
+    """
+    if sys.platform == "win32":
+        return _read_windows_registry_payload()
     if POLICY_FILE is None or not POLICY_FILE.exists():
         return {}
     try:
@@ -248,28 +303,68 @@ def diff_summary(current: dict[str, dict], target_urls: list[str]) -> list[str]:
     return lines
 
 
-def _sudo_write_policy(entries: list[dict]) -> None:
-    """Atomically replace `POLICY_FILE` with `entries`, via sudo.
+def _write_windows_registry(entries: list[dict]) -> None:
+    """Write ``WebAppInstallForceList`` entries to the Windows registry.
 
-    The path lives in a root-owned directory on both platforms
-    (`/etc/brave/policies/managed/` on Linux, `/Library/Managed
-    Preferences/` on macOS) so escalation is unavoidable. The
-    serialization differs per-platform but the install path doesn't —
-    `mkdir -p` + `tee` works the same on both.
+    Requires administrator privileges (HKLM is admin-only for writes).
+    The subkey is deleted then recreated to ensure a clean slate — no
+    stale numbered values survive from a previous run. This mirrors the
+    full-file-replace semantics on Linux.
 
-    Tests monkeypatch this whole function (rather than the `subprocess`
-    calls) so they don't need sudo and don't need to mock argv parsing.
-    The serialization in `_build_policy_payload` is still exercised live
-    through the test fixture's fake.
+    Tests monkeypatch ``_sudo_write_policy`` (which calls this), so this
+    function is only reached in real admin-elevated runs.
     """
+    key_path = _WINDOWS_POLICY_KEY + "\\" + POLICY_KEY
+
+    # Ensure the parent key exists (BraveSoftware\\Brave)
+    parent = winreg.CreateKeyEx(
+        winreg.HKEY_LOCAL_MACHINE,
+        _WINDOWS_POLICY_KEY,
+        0,
+        winreg.KEY_WRITE,
+    )
+    winreg.CloseKey(parent)
+
+    # Delete the list subkey to clear stale values, then recreate
+    try:
+        winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+    except FileNotFoundError:
+        pass
+
+    key = winreg.CreateKeyEx(
+        winreg.HKEY_LOCAL_MACHINE,
+        key_path,
+        0,
+        winreg.KEY_WRITE,
+    )
+    try:
+        for i, entry in enumerate(entries, start=1):
+            winreg.SetValueEx(key, str(i), 0, winreg.REG_SZ, json.dumps(entry))
+    finally:
+        winreg.CloseKey(key)
+
+
+def _sudo_write_policy(entries: list[dict]) -> None:
+    """Write policy entries via the platform-specific privileged path.
+
+    Linux / macOS: ``sudo mkdir`` + ``sudo tee`` into the managed-policy
+    file. macOS also kicks cfprefsd to invalidate its in-memory cache.
+    Windows: ``winreg`` writes to HKLM (requires administrator).
+
+    Tests monkeypatch this whole function (rather than the subprocess /
+    winreg calls) so they don't need elevation and don't need to mock
+    argv parsing. The serialization is still exercised live through the
+    test fixture's fake.
+    """
+    if sys.platform == "win32":
+        _write_windows_registry(entries)
+        return
+
     content = _build_policy_payload(entries)
     subprocess.run(
         ["sudo", "mkdir", "-p", "-m", "0755", str(POLICY_FILE.parent)],
         check=True,
     )
-    # `sudo tee` writes the file as root with the default umask. The
-    # resulting mode is 0644, which is what both Chromium (Linux managed
-    # policies) and cfprefsd (macOS managed preferences) expect.
     subprocess.run(
         ["sudo", "tee", str(POLICY_FILE)],
         input=content,
@@ -278,21 +373,9 @@ def _sudo_write_policy(entries: list[dict]) -> None:
     )
 
     if sys.platform == "darwin":
-        # cfprefsd caches `CFPreferences*` lookups in memory and does
-        # NOT watch its backing files for external changes — it owns
-        # the writes and assumes nobody else touches them. Writing the
-        # plist via `tee` bypasses cfprefsd entirely, so any process
-        # (Brave on its next launch, our own read-back verify) that
-        # queries the policy via the CFPreferences API will still get
-        # the previously-cached value (typically: "no value set"),
-        # and Brave will silently launch without the policy applied.
-        # Killing cfprefsd forces it to re-scan on the next query;
-        # launchd respawns it transparently within milliseconds.
-        # Both the root daemon and the per-user agent are cleared so
-        # both Brave's policy_loader and our verify path get fresh
-        # data. `check=False` because killall returns 1 when there's
-        # nothing matching to kill (e.g. on a system that just booted
-        # and cfprefsd hasn't been demand-started yet).
+        # cfprefsd caches CFPreferences lookups in memory and does NOT
+        # watch its backing files for external changes. Killing it
+        # forces a re-scan; launchd respawns it within milliseconds.
         subprocess.run(
             ["sudo", "killall", "cfprefsd"],
             check=False,
@@ -378,7 +461,11 @@ def cmd_dump(args: argparse.Namespace) -> None:
     else:
         lines.append("urls = []")
         lines.append("")
-        lines.append(f"# (no managed PWAs — {POLICY_FILE} does not exist or is empty)")
+        if sys.platform == "win32":
+            location = f"HKLM\\{_WINDOWS_POLICY_KEY}\\{POLICY_KEY}"
+        else:
+            location = str(POLICY_FILE)
+        lines.append(f"# (no managed PWAs — {location} does not exist or is empty)")
     out = "\n".join(lines) + "\n"
     if args.output:
         Path(args.output).write_text(out)
@@ -394,9 +481,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
 
-    # `POLICY_FILE` is None on unsupported platforms; fall back to a
-    # generic blurb so `--help` still works without crashing at import.
-    _help_path = POLICY_FILE or "the managed-policy file"
+    if sys.platform == "win32":
+        _help_path = f"HKLM\\{_WINDOWS_POLICY_KEY}"
+    else:
+        _help_path = POLICY_FILE or "the managed-policy file"
     d = sub.add_parser(
         "dump",
         help=f"emit URLs from {_help_path} as a `[pwa]` TOML table",

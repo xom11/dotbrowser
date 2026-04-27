@@ -1,21 +1,19 @@
 """End-to-end tests for `brave apply` exercising the [pwa] table.
 
 The pwa module is the first dotbrowser surface to (a) own state outside
-the user's profile (Brave's managed-policy file: `/etc/.../*.json` on
-Linux, `/Library/Managed Preferences/com.brave.Browser.plist` on macOS)
-and (b) require sudo to apply. These tests bypass both: `POLICY_FILE`
-is redirected into the per-test `tmp_path`, and `_sudo_write_policy` /
-the orchestrator's `sudo -v` preflight are replaced with no-sudo stubs.
-That isolation is what lets the suite run unattended in CI without ever
-touching real /etc/, /Library/, or prompting for a password.
+the user's profile (Brave's managed-policy file / Windows registry) and
+(b) require elevated privileges to apply. These tests bypass both:
+`POLICY_FILE` is redirected into the per-test `tmp_path` (Linux/macOS),
+and `_sudo_write_policy` / the orchestrator's privilege preflight are
+replaced with no-escalation stubs. On Windows the fake writes plain
+JSON to a temp file instead of the registry.
+
+That isolation lets the suite run unattended in CI without ever touching
+real /etc/, /Library/, the registry, or prompting for credentials.
 
 The fake `_sudo_write_policy` calls into the real `_build_policy_payload`
-so the platform-specific serialization (JSON on Linux, binary plist on
-macOS) is exercised live — only the privileged install step is faked.
-Linux/macOS path divergence has dedicated tests; everything else runs
-on both.
-
-Skipped on platforms outside Linux + macOS (Windows isn't wired up).
+(Linux/macOS) so the platform-specific serialization is exercised live —
+only the privileged install step is faked.
 """
 from __future__ import annotations
 
@@ -32,13 +30,17 @@ from dotbrowser import brave as brave_pkg
 from dotbrowser.brave import pwa
 
 pytestmark = pytest.mark.skipif(
-    not (sys.platform.startswith("linux") or sys.platform == "darwin"),
-    reason="pwa apply path is implemented for Linux + macOS",
+    not (sys.platform.startswith("linux") or sys.platform == "darwin" or sys.platform == "win32"),
+    reason="pwa apply path is implemented for Linux, macOS and Windows",
 )
 
 
 def _read_policy_file(path: Path) -> dict:
-    """Parse the policy file using the right format for the current platform."""
+    """Parse the policy file using the right format for the current platform.
+
+    On Windows the fake fixture writes plain JSON (same as Linux) because
+    the real Windows path uses the registry, not a file.
+    """
     if sys.platform == "darwin":
         with path.open("rb") as f:
             return plistlib.load(f)
@@ -60,46 +62,67 @@ def fake_pwa_profile_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect the managed-policy file into tmp + neutralize sudo.
+    """Redirect the managed-policy storage into tmp + neutralize elevation.
 
-    Three monkeypatches together unlock the test:
-    1. `pwa.POLICY_FILE` -> tmp path so `_read_current_policy()` finds
-       per-test state and read-back verification works. The filename
-       mirrors the real per-platform layout (`.json` on Linux, `.plist`
-       on macOS) so tests look realistic when something fails.
-    2. `pwa._sudo_write_policy` -> direct write (no sudo), but it still
-       calls `_build_policy_payload` so the live serializer runs and any
-       platform-specific format bug is caught.
-    3. `brave_pkg.subprocess.run` -> swallow the orchestrator's
-       `sudo -v` preflight; everything else passes through.
+    On Linux/macOS:
+    1. ``pwa.POLICY_FILE`` -> tmp path so ``_read_current_policy()`` finds
+       per-test state and read-back verification works.
+    2. ``pwa._sudo_write_policy`` -> direct write (no sudo), but it still
+       calls ``_build_policy_payload`` so the live serializer runs.
+    3. ``brave_pkg.subprocess.run`` -> swallow the orchestrator's
+       ``sudo -v`` preflight; everything else passes through.
+
+    On Windows the real path is the registry. We redirect both read and
+    write to a plain JSON file in tmp and stub the admin check.
     """
     if sys.platform == "darwin":
         fake_path = tmp_path / "policy" / "com.brave.Browser.plist"
     else:
+        # Both Windows and Linux use a JSON file for the fake
         fake_path = tmp_path / "policy" / "dotbrowser-pwa.json"
-    monkeypatch.setattr(pwa, "POLICY_FILE", fake_path)
 
-    def fake_sudo_write_policy(entries: list[dict]) -> None:
-        fake_path.parent.mkdir(parents=True, exist_ok=True)
-        # Exercise the live platform-specific serializer, write its
-        # bytes directly. Skipping sudo is the *only* fake here.
-        fake_path.write_bytes(pwa._build_policy_payload(entries))
+    if sys.platform == "win32":
+        # On Windows the real read path goes through _read_windows_registry_payload.
+        # Redirect it to read from our fake JSON file instead.
+        def fake_read_payload() -> dict:
+            if not fake_path.exists():
+                return {}
+            try:
+                return json.loads(fake_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                return {}
 
-    monkeypatch.setattr(pwa, "_sudo_write_policy", fake_sudo_write_policy)
+        monkeypatch.setattr(pwa, "_read_existing_payload", fake_read_payload)
 
-    real_run = subprocess.run
+        def fake_sudo_write_policy(entries: list[dict]) -> None:
+            fake_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {pwa.POLICY_KEY: entries}
+            fake_path.write_text(json.dumps(payload, indent=2))
 
-    def fake_run(cmd, *args, **kwargs):
-        # Both shapes the orchestrator probes for sudo are answered as
-        # "yes, sudo would work" so the apply path proceeds without
-        # ever touching real sudo.
-        if list(cmd[:3]) == ["sudo", "-n", "true"]:
-            return subprocess.CompletedProcess(cmd, 0)
-        if list(cmd[:2]) == ["sudo", "-v"]:
-            return subprocess.CompletedProcess(cmd, 0)
-        return real_run(cmd, *args, **kwargs)
+        monkeypatch.setattr(pwa, "_sudo_write_policy", fake_sudo_write_policy)
 
-    monkeypatch.setattr(brave_pkg.subprocess, "run", fake_run)
+        # Stub the admin check so the orchestrator's preflight passes
+        import ctypes
+        monkeypatch.setattr(ctypes.windll.shell32, "IsUserAnAdmin", lambda: 1)
+    else:
+        monkeypatch.setattr(pwa, "POLICY_FILE", fake_path)
+
+        def fake_sudo_write_policy(entries: list[dict]) -> None:
+            fake_path.parent.mkdir(parents=True, exist_ok=True)
+            fake_path.write_bytes(pwa._build_policy_payload(entries))
+
+        monkeypatch.setattr(pwa, "_sudo_write_policy", fake_sudo_write_policy)
+
+        real_run = subprocess.run
+
+        def fake_run(cmd, *args, **kwargs):
+            if list(cmd[:3]) == ["sudo", "-n", "true"]:
+                return subprocess.CompletedProcess(cmd, 0)
+            if list(cmd[:2]) == ["sudo", "-v"]:
+                return subprocess.CompletedProcess(cmd, 0)
+            return real_run(cmd, *args, **kwargs)
+
+        monkeypatch.setattr(brave_pkg.subprocess, "run", fake_run)
     return fake_path
 
 
