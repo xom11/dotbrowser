@@ -5,6 +5,7 @@ Top-level CLI shape:
     dotbrowser brave [--profile-root ...] [--profile ...] <ACTION> ...
 
 Where <ACTION> is one of:
+- `init` — scaffold a commented starter TOML config.
 - `apply <file>` — unified apply for `[shortcuts]`, `[settings]` and
   `[pwa]` tables in a single TOML file (this module). One kill-browser
   + backup + write_atomic cycle covers all three modules.
@@ -20,10 +21,10 @@ writes Brave's managed-policy file under /etc/) hook in via the
 `external_apply_fn` field on `Plan`, which fires after `write_atomic`.
 
 TOML semantics:
-- Missing table (no `[shortcuts]` header)  → that module is skipped
+- Missing table (no `[shortcuts]` header)  -> that module is skipped
   entirely. State file untouched. Safe default for users who only
   manage a subset of namespaces.
-- Empty table (`[settings]` with no entries) → all previously managed
+- Empty table (`[settings]` with no entries) -> all previously managed
   keys are reset (popped / reverted to default). State file becomes
   empty. This is the explicit "wipe my managed entries" gesture.
 """
@@ -167,6 +168,68 @@ def _build_plans(prefs_path: Path, prefs: dict, doc: dict) -> list[Plan]:
             )
         )
     return plans
+
+
+_INIT_TEMPLATE = """\
+# dotbrowser -- Brave configuration
+# Docs: https://github.com/nichochar/dotbrowser
+# List available shortcut names:  dotbrowser brave shortcuts list
+# Inspect current settings:       dotbrowser brave settings dump
+#
+# Apply this file:
+#   dotbrowser brave apply {filename}
+#
+# Table semantics:
+#   - missing header  -> module skipped, managed entries left alone.
+#   - empty body      -> all previously-managed entries reset / popped.
+
+[shortcuts]
+# Command names map to Brave accelerators. Values are lists of key combos
+# using Chromium KeyEvent codes (https://www.w3.org/TR/uievents-code/).
+# Meta+ is auto-translated to Cmd on macOS.
+#
+# back                = ["Alt+KeyH"]
+# forward             = ["Alt+KeyL"]
+# select_previous_tab = ["Alt+KeyK"]
+# select_next_tab     = ["Alt+KeyJ"]
+# new_tab             = ["Control+KeyT"]
+# close_tab           = ["Control+KeyW"]
+# reload              = ["Control+KeyR"]
+
+[settings]
+# Keys are dotted paths into Brave's Preferences JSON.
+# MAC-protected keys (homepage, default search, etc.) are refused -- set those
+# in the Brave UI.
+#
+# "brave.tabs.vertical_tabs_enabled"   = true
+# "brave.tabs.vertical_tabs_collapsed" = true
+# "omnibox.prevent_url_elisions"       = true
+# "brave.new_tab_page.show_stats"      = false
+# "brave.new_tab_page.show_brave_news" = false
+
+# [pwa]
+# Force-installed Progressive Web Apps via Chromium enterprise policy.
+# Requires sudo (Linux/macOS) or Administrator (Windows) + Brave restart.
+# Uncomment the header and add URLs to enable.
+#
+# urls = [
+#   "https://squoosh.app/",
+# ]
+"""
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    filename = args.output or "brave.toml"
+    text = _INIT_TEMPLATE.replace("{filename}", filename)
+
+    if args.output:
+        dest = Path(args.output)
+        if dest.exists():
+            sys.exit(f"error: {dest} already exists — refusing to overwrite")
+        dest.write_text(text, encoding="utf-8")
+        print(f"wrote {dest}")
+    else:
+        sys.stdout.write(text)
 
 
 def cmd_apply(args: argparse.Namespace) -> None:
@@ -325,6 +388,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="profile dir name (default: Default)",
     )
     sub = p.add_subparsers(dest="module", required=True, metavar="ACTION")
+
+    i = sub.add_parser("init", help="scaffold a starter TOML config")
+    i.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE",
+        help="write to FILE instead of stdout",
+    )
+    i.set_defaults(func=cmd_init)
 
     a = sub.add_parser(
         "apply",
