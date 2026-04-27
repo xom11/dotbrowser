@@ -86,6 +86,87 @@ def test_settings_apply_refuses_mac_protected_key(
         )
 
 
+def test_settings_apply_refuses_key_protected_only_in_secure_preferences(
+    fake_chrome_profile: Path, tmp_path: Path
+) -> None:
+    """Chrome regression: most MAC bookkeeping lives in ``Secure Preferences``,
+    not ``Preferences``.  Without merging both, ``apply`` would accept
+    ``homepage`` and Chrome would silently reset it on next launch."""
+    profile = fake_chrome_profile / "Default"
+    prefs_path = profile / "Preferences"
+    # Plain Preferences has NO protection.macs at all:
+    assert "protection" not in json.loads(prefs_path.read_text())
+    # ...but a sibling Secure Preferences MAC-protects homepage:
+    secure = {"protection": {"macs": {"homepage": "DEADBEEF" * 8}}}
+    (profile / "Secure Preferences").write_text(json.dumps(secure))
+
+    with pytest.raises(SystemExit, match="MAC-protected"):
+        st.plan_apply(
+            prefs_path,
+            json.loads(prefs_path.read_text()),
+            {"homepage": "https://example.com"},
+        )
+
+
+def test_settings_apply_merges_macs_from_both_files(
+    fake_chrome_profile: Path, tmp_path: Path
+) -> None:
+    """A key MAC'd in either file must be refused; an unrelated key
+    must still be writable."""
+    profile = fake_chrome_profile / "Default"
+    prefs_path = profile / "Preferences"
+    prefs = json.loads(prefs_path.read_text())
+    prefs["protection"] = {"macs": {"in_main": "AA" * 16}}
+    prefs_path.write_text(json.dumps(prefs))
+    secure = {"protection": {"macs": {"in_secure": "BB" * 16}}}
+    (profile / "Secure Preferences").write_text(json.dumps(secure))
+
+    # Both protected keys refused in one error.
+    with pytest.raises(SystemExit) as exc:
+        st.plan_apply(
+            prefs_path,
+            json.loads(prefs_path.read_text()),
+            {"in_main": 1, "in_secure": 2},
+        )
+    msg = str(exc.value)
+    assert "in_main" in msg
+    assert "in_secure" in msg
+
+    # Unrelated key passes through.
+    plan = st.plan_apply(
+        prefs_path,
+        json.loads(prefs_path.read_text()),
+        {"bookmark_bar.show_on_all_tabs": False},
+    )
+    assert plan.namespace == "settings"
+
+
+def test_blocked_lists_secure_preferences_mac_keys(
+    fake_chrome_profile: Path, monkeypatch
+) -> None:
+    """`settings blocked` must surface keys MAC-protected in either file."""
+    profile = fake_chrome_profile / "Default"
+    secure = {
+        "protection": {"macs": {"homepage": "DEADBEEF" * 8}},
+        "homepage": "https://stored-in-secure.example",
+    }
+    (profile / "Secure Preferences").write_text(json.dumps(secure))
+
+    args = argparse.Namespace(
+        profile_root=fake_chrome_profile,
+        profile="Default",
+        output=None,
+    )
+    import io
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buf)
+    st.cmd_blocked(args)
+    out = buf.getvalue()
+    assert '"homepage"' in out
+    # Value resolved from Secure Preferences when not in Preferences.
+    assert "https://stored-in-secure.example" in out
+
+
 def test_dry_run_does_not_write(
     fake_chrome_profile: Path, tmp_path: Path, monkeypatch
 ) -> None:
