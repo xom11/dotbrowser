@@ -15,3 +15,7 @@ venv/
 htmlcov/
 .coverage
 *.bak.*
+
+# nix
+result
+result-*
