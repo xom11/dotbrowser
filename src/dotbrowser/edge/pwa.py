@@ -16,7 +16,7 @@ POLICY_KEY = _base.POLICY_KEY
 _PWA_CONFIG = _base.PwaConfig(
     browser_name="edge",
     linux_policy_path="/etc/opt/edge/policies/managed/dotbrowser-pwa.json",
-    macos_plist_path="/Library/Managed Preferences/com.microsoft.Edge.plist",
+    macos_plist_path="/Library/Managed Preferences/com.microsoft.edgemac.plist",
     windows_registry_key=r"Software\Policies\Microsoft\Edge",
 )
 

@@ -252,7 +252,8 @@ def test_three_namespace_apply_in_one_cycle(
                 return subprocess.CompletedProcess(cmd, 0)
             return real_run(cmd, *args, **kwargs)
 
-        monkeypatch.setattr(vivaldi_pkg.subprocess, "run", fake_run)
+        from dotbrowser._base import orchestrator as orch
+        monkeypatch.setattr(orch.subprocess, "run", fake_run)
 
     cfg = tmp_path / "vivaldi.toml"
     cfg.write_text(
