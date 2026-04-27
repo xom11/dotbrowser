@@ -26,10 +26,10 @@ items live in [issues](https://github.com/xom11/dotbrowser/issues).
 
 ## Refactor & cleanup
 
-- **Single source of truth for `version`.** `pyproject.toml` and
-  `src/dotbrowser/__init__.py` both hold the version literal. Hatchling
-  supports `[tool.hatch.version] path = "src/dotbrowser/__init__.py"` —
-  switch and remove the `version =` line from pyproject.
+- ~~**Single source of truth for `version`.**~~ ✅ Done — `pyproject.toml`
+  now reads `__version__` from `src/dotbrowser/__init__.py` via
+  `[tool.hatch.version]`. Bump only the `__init__.py` literal at
+  release time.
 
 - **Factor the per-browser `pwa.py` boilerplate.** `brave/pwa.py`,
   `vivaldi/pwa.py`, and `edge/pwa.py` are ~70 lines each of nearly
@@ -38,9 +38,8 @@ items live in [issues](https://github.com/xom11/dotbrowser/issues).
   browser. A factory `make_pwa_module(cfg) -> ModuleType` could emit
   the same shape with less duplication while staying patchable.
 
-- **`edge/settings.py` uses `lambda` for `plan_apply`** while Brave and
-  Vivaldi use `def`. Tracebacks from a `<lambda>` are slightly less
-  readable. Switch for consistency.
+- ~~**`edge/settings.py` uses `lambda` for `plan_apply`**~~ ✅ Done —
+  switched to `def` to match Brave and Vivaldi.
 
 - **`_pop_value` leaves empty parent dicts behind.** Cosmetic, but
   makes `dump --all` show empty `{}` nodes. Walk up and prune empty
@@ -69,10 +68,11 @@ items live in [issues](https://github.com/xom11/dotbrowser/issues).
   `urls = ["..."]` form or
   `urls = [{ url = "...", launch_container = "tab" }]`.
 
-- **Vivaldi sync detection.** `_sync_enabled` reads
-  `sync.has_setup_completed`, the Chromium key. Vivaldi has its own
-  `vivaldi_sync.*` subtree. Detect it and warn analogously to the Brave
-  Sync warning.
+- ~~**Vivaldi sync detection.**~~ ✅ Done — `_sync_enabled` now
+  dispatches per browser via `_SYNC_KEY_BY_BROWSER`. Vivaldi reads
+  `vivaldi.sync.has_setup_completed`. Best-effort key; if Vivaldi
+  changes its schema the warning may misfire, which is preferred over
+  no warning.
 
 - **`settings dump --diff <config>`.** Emit only the keys whose current
   value differs from the proposed value. Fastest way to debug "I

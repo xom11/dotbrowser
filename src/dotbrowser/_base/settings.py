@@ -55,16 +55,34 @@ def _pop_value(prefs: dict, parts: tuple[str, ...]) -> None:
         cur.pop(parts[-1], None)
 
 
-def _sync_enabled(prefs: dict) -> bool:
-    """Whether the user has set up Chromium-style sync.
+_SYNC_KEY_BY_BROWSER: dict[str, tuple[str, ...]] = {
+    "brave": ("sync", "has_setup_completed"),
+    "edge": ("sync", "has_setup_completed"),
+    # Vivaldi has its own sync stack rather than reusing Chromium's, so
+    # the flag lives under a vivaldi-specific subtree.  Best-effort key;
+    # if Vivaldi changes its schema the warning may fire incorrectly,
+    # but the alternative was missing the warning entirely.
+    "vivaldi": ("vivaldi", "sync", "has_setup_completed"),
+}
 
-    ``sync.has_setup_completed`` is the canonical post-setup flag; it
-    stays true even if the user later signs out, so the check is
-    conservative (warns slightly more often than strictly needed).
-    Brave, Edge, and Vivaldi all surface this same key when their
-    underlying sync is active.
+
+def _sync_enabled(browser_name: str, prefs: dict) -> bool:
+    """Whether the user has set up sync for this browser.
+
+    The canonical post-setup flag stays true even after the user signs
+    out, so the check is conservative (warns slightly more often than
+    strictly needed).  An unknown ``browser_name`` falls back to the
+    Chromium-style ``sync.has_setup_completed`` key.
     """
-    return bool(prefs.get("sync", {}).get("has_setup_completed"))
+    parts = _SYNC_KEY_BY_BROWSER.get(
+        browser_name, ("sync", "has_setup_completed")
+    )
+    cur: object = prefs
+    for p in parts:
+        if not isinstance(cur, dict):
+            return False
+        cur = cur.get(p)
+    return bool(cur)
 
 
 def _is_mac_protected(prefs: dict, parts: tuple[str, ...]) -> bool:
@@ -146,7 +164,7 @@ def plan_apply(browser_name: str, prefs_path: Path, prefs: dict, raw_table: obje
     diff = diff_summary(prefs, target, removed_keys)
 
     warnings: list[str] = []
-    if (target or removed_keys) and _sync_enabled(prefs):
+    if (target or removed_keys) and _sync_enabled(browser_name, prefs):
         warnings.append(
             f"warning: {browser_name.title()} Sync is enabled "
             f"(sync.has_setup_completed=true).\n"

@@ -9,10 +9,11 @@ from dotbrowser._base.utils import Plan
 
 NAMESPACE = _base.NAMESPACE
 
-plan_apply = lambda prefs_path, prefs, raw_table: _base.plan_apply(
-    "edge", prefs_path, prefs, raw_table
-)
 diff_summary = _base.diff_summary
+
+
+def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
+    return _base.plan_apply("edge", prefs_path, prefs, raw_table)
 
 
 def cmd_dump(args: argparse.Namespace) -> None:
