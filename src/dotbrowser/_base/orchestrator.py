@@ -206,13 +206,19 @@ def cmd_apply(
     shutil.copy2(prefs_path, backup)
     print(f"backup: {backup}")
 
+    # In-memory mutate first; nothing is on disk yet.
     for plan in plans:
         plan.apply_fn(prefs)
-    write_atomic(prefs_path, prefs)
 
+    # External (privileged) writes go BEFORE write_atomic so a sudo / I/O
+    # failure here leaves Preferences unchanged.  The previous ordering
+    # left prefs committed but the policy file un-applied if sudo
+    # flaked, breaking the "single cycle" promise.
     for plan in plans:
         if plan.external_apply_fn is not None:
             plan.external_apply_fn()
+
+    write_atomic(prefs_path, prefs)
 
     for plan in plans:
         if plan.state_path is not None:

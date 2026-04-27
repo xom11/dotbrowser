@@ -223,10 +223,10 @@ def test_three_namespace_apply_in_one_cycle(
     combined_profile_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
     """[shortcuts] + [settings] + [pwa] in one TOML must all apply in a
-    single backup + write_atomic cycle. pwa's external (sudo) write
-    must run AFTER Preferences are durable on disk so a sudo failure
-    cannot leave shortcuts/settings unwritten — even though here it
-    succeeds.
+    single backup + write cycle. pwa's external (sudo) write runs
+    BEFORE Preferences are committed so a sudo failure leaves
+    Preferences unchanged (see test_external_failure_leaves_prefs_unchanged
+    below for the failure-mode assertion).
     """
     if not (sys.platform.startswith("linux") or sys.platform == "darwin" or sys.platform == "win32"):
         pytest.skip("pwa apply path is implemented for Linux, macOS and Windows")
@@ -354,3 +354,76 @@ def test_empty_table_resets_managed_entries(
         (combined_profile_root / "Default" / "Preferences.dotbrowser.settings.json").read_text()
     )
     assert state["managed_keys"] == []
+
+
+def test_external_failure_leaves_prefs_unchanged(
+    combined_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """If a [pwa] external_apply_fn raises (sudo flake, EACCES on a
+    network mount, ...), Preferences must NOT be committed -- the
+    shortcuts/settings changes should roll forward together with the
+    pwa write or not at all.
+
+    Implementation guarantee: orchestrator runs external_apply_fn
+    BEFORE write_atomic. This test pins that ordering.
+    """
+    if not (sys.platform.startswith("linux") or sys.platform == "darwin" or sys.platform == "win32"):
+        pytest.skip("pwa apply path is implemented for Linux, macOS and Windows")
+
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+
+    # Stub the privilege preflight + read path; only the *write* should fail.
+    if sys.platform == "win32":
+        import ctypes
+        monkeypatch.setattr(ctypes.windll.shell32, "IsUserAnAdmin", lambda: 1)
+        monkeypatch.setattr(pwa_mod, "_read_existing_payload", lambda: {})
+    else:
+        if sys.platform == "darwin":
+            fake_policy = tmp_path / "policy" / "com.brave.Browser.plist"
+        else:
+            fake_policy = tmp_path / "policy" / "dotbrowser-pwa.json"
+        monkeypatch.setattr(pwa_mod, "POLICY_FILE", fake_policy)
+
+        real_run = subprocess.run
+
+        def fake_run(cmd, *args, **kwargs):
+            if list(cmd[:3]) == ["sudo", "-n", "true"]:
+                return subprocess.CompletedProcess(cmd, 0)
+            if list(cmd[:2]) == ["sudo", "-v"]:
+                return subprocess.CompletedProcess(cmd, 0)
+            return real_run(cmd, *args, **kwargs)
+
+        from dotbrowser._base import orchestrator as orch
+        monkeypatch.setattr(orch.subprocess, "run", fake_run)
+
+    def boom(_entries):
+        raise SystemExit("simulated sudo failure")
+
+    monkeypatch.setattr(pwa_mod, "_sudo_write_policy", boom)
+
+    prefs_path = combined_profile_root / "Default" / "Preferences"
+    before = prefs_path.read_bytes()
+
+    cfg = tmp_path / "brave.toml"
+    cfg.write_text(
+        '[shortcuts]\n'
+        'focus_location = ["Alt+KeyD"]\n'
+        '\n'
+        '[settings]\n'
+        '"brave.tabs.vertical_tabs_enabled" = true\n'
+        '\n'
+        '[pwa]\n'
+        'urls = ["https://squoosh.app/"]\n'
+    )
+
+    with pytest.raises(SystemExit, match="simulated sudo failure"):
+        _apply(combined_profile_root, cfg)
+
+    # The contract: Preferences was not touched.
+    assert prefs_path.read_bytes() == before, (
+        "external_apply_fn failure must leave Preferences unchanged"
+    )
+    # State sidecars must not exist either -- they're written after
+    # write_atomic, which we never reached.
+    assert not (combined_profile_root / "Default" / "Preferences.dotbrowser.shortcuts.json").exists()
+    assert not (combined_profile_root / "Default" / "Preferences.dotbrowser.settings.json").exists()
