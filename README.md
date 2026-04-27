@@ -198,7 +198,7 @@ Dual-install machines (e.g. `.deb` + Snap installed side-by-side) prefer the dir
 ## Caveats
 
 - **Brave Sync** can overwrite `[settings]` entries on its next pulse if they fall in a synced category. UI-layout keys like `brave.tabs.vertical_tabs_*` are local-only and immune.
-- **Brave + Vivaldi** on Linux, macOS, and Windows. Chrome hardcodes shortcuts (no UI to customize), so this approach doesn't apply to Chrome.
+- **Brave + Vivaldi only — not Chrome.** Chrome hardcodes keyboard shortcuts in C++ (there is no `Preferences` key to override), and most useful settings (`homepage`, `session.startup_urls`, `browser.show_home_button`, `pinned_tabs`, …) are MAC-protected in `Secure Preferences` — Chrome computes an HMAC per value and silently resets any externally-modified entry on launch. Brave and Vivaldi expose dedicated, non-MAC-protected prefs (`brave.accelerators`, `vivaldi.actions`) specifically for user customisation, which is what makes dotbrowser possible.
 - A handful of settings (`homepage`, default search engine, `pinned_tabs`, …) are integrity-protected and can't be patched yet — dotbrowser refuses them with a clear error rather than letting the change silently disappear on next launch. Set those via the Brave UI for now.
 - **`[pwa]` is force-install** (Chromium's enterprise `WebAppInstallForceList`). Apps installed this way appear in `chrome://apps` with an "Installed by your administrator" label and the right-click "Remove" option is hidden — to uninstall, delete the URL from `[pwa]` and re-apply, then dotbrowser/Brave does the rest. This is the right semantics for dotfile-style management (the TOML is the source of truth) but worth knowing if you also install PWAs by hand via the address-bar Install button.
 
