@@ -203,6 +203,8 @@ def test_pwa_validate_accepts_url_list() -> None:
     assert out == ["https://squoosh.app/"]
 
 
-def test_pwa_validate_rejects_non_http() -> None:
-    with pytest.raises(SystemExit, match="must start with http"):
+def test_pwa_validate_rejects_non_https() -> None:
+    with pytest.raises(SystemExit, match="must start with https://"):
         pwa._validate_table({"urls": ["javascript:alert(1)"]})
+    with pytest.raises(SystemExit, match="must start with https://"):
+        pwa._validate_table({"urls": ["http://example.com/"]})

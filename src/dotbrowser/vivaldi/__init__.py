@@ -78,7 +78,7 @@ def _build_plans(prefs_path: Path, prefs: dict, doc: dict) -> list[Plan]:
 
 _INIT_TEMPLATE = """\
 # dotbrowser -- Vivaldi configuration
-# Docs: https://github.com/nichochar/dotbrowser
+# Docs: https://github.com/xom11/dotbrowser
 # List available shortcut names:  dotbrowser vivaldi shortcuts list
 # Inspect current settings:       dotbrowser vivaldi settings dump
 #
