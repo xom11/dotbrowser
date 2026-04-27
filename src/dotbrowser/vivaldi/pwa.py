@@ -11,16 +11,19 @@ differ:
 
 - Linux: `/etc/vivaldi/policies/managed/dotbrowser-pwa.json` (JSON,
   namespaced by filename so dotbrowser never collides with policies
-  installed by an MDM).
+  installed by an MDM). Requires sudo.
 - macOS: `/Library/Managed Preferences/com.vivaldi.Vivaldi.plist`
   (binary plist keyed by Vivaldi's bundle ID — there is exactly one such
   file per app, so the file is shared with any active MDM and we must
   read-modify-write the single `WebAppInstallForceList` key while
-  preserving unrelated keys). Each write also kicks cfprefsd with
-  `sudo killall cfprefsd` for the same reason as in the brave module:
-  cfprefsd caches `CFPreferences*` lookups in memory and does not watch
-  its backing files, so without the killall, Vivaldi silently launches
-  with the cached "no policy" state on the next start.
+  preserving unrelated keys). Requires sudo. Each write also kicks
+  cfprefsd with `sudo killall cfprefsd` for the same reason as in the
+  brave module: cfprefsd caches `CFPreferences*` lookups in memory and
+  does not watch its backing files, so without the killall, Vivaldi
+  silently launches with the cached "no policy" state on the next start.
+- Windows: registry at `HKLM\\Software\\Policies\\Vivaldi\\
+  WebAppInstallForceList` — numbered REG_SZ values ("1", "2", …), each
+  containing a JSON string for one entry. Requires administrator.
 
 Config schema (TOML), inside the unified `vivaldi.toml`:
 
@@ -40,11 +43,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+if sys.platform == "win32":
+    import winreg
+
 from dotbrowser.vivaldi.utils import Plan, find_preferences
 
 NAMESPACE = "pwa"
 
 POLICY_KEY = "WebAppInstallForceList"
+
+# Windows stores Chromium policies in the registry, not a file.
+_WINDOWS_POLICY_KEY = r"Software\Policies\Vivaldi"
 
 
 def _default_policy_file() -> Path | None:
@@ -74,10 +83,12 @@ _DEFAULT_ENTRY = {
 
 
 def _check_platform_supported() -> None:
+    if sys.platform == "win32":
+        return  # Windows uses registry, not a file
     if POLICY_FILE is None:
         sys.exit(
             f"error: [pwa] is not yet implemented on platform={sys.platform!r}. "
-            f"Linux and macOS are supported."
+            f"Linux, macOS and Windows are supported."
         )
 
 
@@ -117,16 +128,52 @@ def _validate_table(raw: object) -> list[str]:
     return out
 
 
-def _read_existing_payload() -> dict:
-    """Return the full parsed policy file (whole dict), or `{}` if missing.
+def _read_windows_registry_payload() -> dict:
+    """Read ``WebAppInstallForceList`` entries from the Windows registry.
 
-    On macOS this dict may carry unrelated MDM keys that we have to
-    preserve when we round-trip — `_build_policy_payload` uses this to
-    merge our key without clobbering those. On Linux the file is
-    namespaced by filename so the result will only ever contain our key.
-
-    Both formats are world-readable, so this runs without escalation.
+    Returns a dict shaped like ``{POLICY_KEY: [entry, …]}`` so the rest
+    of the read path can treat it identically to the file-based payload.
     """
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            _WINDOWS_POLICY_KEY + "\\" + POLICY_KEY,
+            0,
+            winreg.KEY_READ,
+        )
+    except OSError:
+        return {}
+    entries: list[dict] = []
+    try:
+        i = 0
+        while True:
+            try:
+                _name, value, vtype = winreg.EnumValue(key, i)
+                if vtype == winreg.REG_SZ and value:
+                    try:
+                        parsed = json.loads(value)
+                        if isinstance(parsed, dict):
+                            entries.append(parsed)
+                    except json.JSONDecodeError:
+                        pass
+                i += 1
+            except OSError:
+                break
+    finally:
+        winreg.CloseKey(key)
+    return {POLICY_KEY: entries} if entries else {}
+
+
+def _read_existing_payload() -> dict:
+    """Return the full parsed policy data, or ``{}`` if missing.
+
+    On Windows reads from the registry. On macOS this dict may carry
+    unrelated MDM keys that we have to preserve when we round-trip. On
+    Linux the file is namespaced by filename so the result will only
+    ever contain our key. All sources are readable without escalation.
+    """
+    if sys.platform == "win32":
+        return _read_windows_registry_payload()
     if POLICY_FILE is None or not POLICY_FILE.exists():
         return {}
     try:
@@ -191,18 +238,53 @@ def diff_summary(current: dict[str, dict], target_urls: list[str]) -> list[str]:
     return lines
 
 
-def _sudo_write_policy(entries: list[dict]) -> None:
-    """Atomically replace `POLICY_FILE` with `entries`, via sudo.
+def _write_windows_registry(entries: list[dict]) -> None:
+    """Write ``WebAppInstallForceList`` entries to the Windows registry.
 
-    The path lives in a root-owned directory on both platforms
-    (`/etc/vivaldi/policies/managed/` on Linux, `/Library/Managed
-    Preferences/` on macOS) so escalation is unavoidable. The
-    serialization differs per-platform but the install path doesn't —
-    `mkdir -p` + `tee` works the same on both.
-
-    Tests monkeypatch this whole function (rather than the `subprocess`
-    calls) so they don't need sudo and don't need to mock argv parsing.
+    Requires administrator privileges. The subkey is deleted then
+    recreated to ensure a clean slate.
     """
+    key_path = _WINDOWS_POLICY_KEY + "\\" + POLICY_KEY
+
+    parent = winreg.CreateKeyEx(
+        winreg.HKEY_LOCAL_MACHINE,
+        _WINDOWS_POLICY_KEY,
+        0,
+        winreg.KEY_WRITE,
+    )
+    winreg.CloseKey(parent)
+
+    try:
+        winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+    except FileNotFoundError:
+        pass
+
+    key = winreg.CreateKeyEx(
+        winreg.HKEY_LOCAL_MACHINE,
+        key_path,
+        0,
+        winreg.KEY_WRITE,
+    )
+    try:
+        for i, entry in enumerate(entries, start=1):
+            winreg.SetValueEx(key, str(i), 0, winreg.REG_SZ, json.dumps(entry))
+    finally:
+        winreg.CloseKey(key)
+
+
+def _sudo_write_policy(entries: list[dict]) -> None:
+    """Write policy entries via the platform-specific privileged path.
+
+    Linux / macOS: ``sudo mkdir`` + ``sudo tee`` into the managed-policy
+    file. macOS also kicks cfprefsd to invalidate its in-memory cache.
+    Windows: ``winreg`` writes to HKLM (requires administrator).
+
+    Tests monkeypatch this whole function so they don't need elevation.
+    """
+    if sys.platform == "win32":
+        _write_windows_registry(entries)
+        return
+
     content = _build_policy_payload(entries)
     subprocess.run(
         ["sudo", "mkdir", "-p", "-m", "0755", str(POLICY_FILE.parent)],
@@ -216,13 +298,6 @@ def _sudo_write_policy(entries: list[dict]) -> None:
     )
 
     if sys.platform == "darwin":
-        # See brave/pwa.py for the full rationale: cfprefsd does not
-        # watch its backing files for external mutations, so without
-        # this kick a process that previously read the policy via
-        # CFPreferences (Vivaldi on a prior launch, our own verify
-        # path) keeps the cached "no value" answer and Vivaldi
-        # silently launches without the policy applied. launchd
-        # respawns cfprefsd within milliseconds.
         subprocess.run(
             ["sudo", "killall", "cfprefsd"],
             check=False,
@@ -302,7 +377,11 @@ def cmd_dump(args: argparse.Namespace) -> None:
     else:
         lines.append("urls = []")
         lines.append("")
-        lines.append(f"# (no managed PWAs — {POLICY_FILE} does not exist or is empty)")
+        if sys.platform == "win32":
+            location = f"HKLM\\{_WINDOWS_POLICY_KEY}\\{POLICY_KEY}"
+        else:
+            location = str(POLICY_FILE)
+        lines.append(f"# (no managed PWAs — {location} does not exist or is empty)")
     out = "\n".join(lines) + "\n"
     if args.output:
         Path(args.output).write_text(out)
@@ -318,7 +397,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
 
-    _help_path = POLICY_FILE or "the managed-policy file"
+    if sys.platform == "win32":
+        _help_path = f"HKLM\\{_WINDOWS_POLICY_KEY}"
+    else:
+        _help_path = POLICY_FILE or "the managed-policy file"
     d = sub.add_parser(
         "dump",
         help=f"emit URLs from {_help_path} as a `[pwa]` TOML table",

@@ -204,8 +204,8 @@ def test_three_namespace_apply_in_one_cycle(
     """All three modules in one TOML must apply with a single backup +
     write_atomic and an external pwa write that succeeds AFTER prefs
     are durable on disk."""
-    if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
-        pytest.skip("pwa apply path is implemented for Linux + macOS")
+    if not (sys.platform.startswith("linux") or sys.platform == "darwin" or sys.platform == "win32"):
+        pytest.skip("pwa apply path is implemented for Linux, macOS and Windows")
 
     monkeypatch.setattr(vivaldi_pkg, "vivaldi_running", lambda: False)
 
@@ -213,24 +213,46 @@ def test_three_namespace_apply_in_one_cycle(
         fake_policy = tmp_path / "policy" / "com.vivaldi.Vivaldi.plist"
     else:
         fake_policy = tmp_path / "policy" / "dotbrowser-pwa.json"
-    monkeypatch.setattr(pwa_mod, "POLICY_FILE", fake_policy)
 
-    def fake_sudo_write(entries: list[dict]) -> None:
-        fake_policy.parent.mkdir(parents=True, exist_ok=True)
-        fake_policy.write_bytes(pwa_mod._build_policy_payload(entries))
+    if sys.platform == "win32":
+        import ctypes
 
-    monkeypatch.setattr(pwa_mod, "_sudo_write_policy", fake_sudo_write)
+        def fake_read_payload() -> dict:
+            if not fake_policy.exists():
+                return {}
+            try:
+                return json.loads(fake_policy.read_text())
+            except (json.JSONDecodeError, OSError):
+                return {}
 
-    real_run = subprocess.run
+        monkeypatch.setattr(pwa_mod, "_read_existing_payload", fake_read_payload)
 
-    def fake_run(cmd, *args, **kwargs):
-        if list(cmd[:3]) == ["sudo", "-n", "true"]:
-            return subprocess.CompletedProcess(cmd, 0)
-        if list(cmd[:2]) == ["sudo", "-v"]:
-            return subprocess.CompletedProcess(cmd, 0)
-        return real_run(cmd, *args, **kwargs)
+        def fake_sudo_write(entries: list[dict]) -> None:
+            fake_policy.parent.mkdir(parents=True, exist_ok=True)
+            payload = {pwa_mod.POLICY_KEY: entries}
+            fake_policy.write_text(json.dumps(payload, indent=2))
 
-    monkeypatch.setattr(vivaldi_pkg.subprocess, "run", fake_run)
+        monkeypatch.setattr(pwa_mod, "_sudo_write_policy", fake_sudo_write)
+        monkeypatch.setattr(ctypes.windll.shell32, "IsUserAnAdmin", lambda: 1)
+    else:
+        monkeypatch.setattr(pwa_mod, "POLICY_FILE", fake_policy)
+
+        def fake_sudo_write(entries: list[dict]) -> None:
+            fake_policy.parent.mkdir(parents=True, exist_ok=True)
+            fake_policy.write_bytes(pwa_mod._build_policy_payload(entries))
+
+        monkeypatch.setattr(pwa_mod, "_sudo_write_policy", fake_sudo_write)
+
+        real_run = subprocess.run
+
+        def fake_run(cmd, *args, **kwargs):
+            if list(cmd[:3]) == ["sudo", "-n", "true"]:
+                return subprocess.CompletedProcess(cmd, 0)
+            if list(cmd[:2]) == ["sudo", "-v"]:
+                return subprocess.CompletedProcess(cmd, 0)
+            return real_run(cmd, *args, **kwargs)
+
+        monkeypatch.setattr(vivaldi_pkg.subprocess, "run", fake_run)
 
     cfg = tmp_path / "vivaldi.toml"
     cfg.write_text(

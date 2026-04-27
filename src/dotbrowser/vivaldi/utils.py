@@ -2,8 +2,8 @@
 
 Mirrors brave/utils.py: process detection, kill, restart, write_atomic,
 and the `Plan` dataclass. Vivaldi is also Chromium-based, so the I/O
-shape is the same; what differs is process names and the macOS .app
-basename, which is the only thing this module encodes.
+shape is the same; what differs is process names and the macOS .app /
+Windows .exe basename, which is the only thing this module encodes.
 """
 from __future__ import annotations
 
@@ -51,20 +51,50 @@ def _is_macos() -> bool:
     return sys.platform == "darwin"
 
 
-def _vivaldi_proc_name() -> str:
-    """The basename `pgrep -x` matches.
+def _is_windows() -> bool:
+    return sys.platform == "win32"
 
-    On macOS the executable inside the .app is literally `Vivaldi` (no
-    space — different from Brave, which is `Brave Browser`). On Linux
-    the user-facing wrapper is `vivaldi`, but the actual main process
-    after exec is `vivaldi-bin`; pgrep on either name will miss the
+
+def _vivaldi_proc_name() -> str:
+    """The process name used for detection and killing.
+
+    On macOS the executable inside the .app is literally ``Vivaldi`` (no
+    space — different from Brave, which is ``Brave Browser``). On Linux
+    the user-facing wrapper is ``vivaldi``, but the actual main process
+    after exec is ``vivaldi-bin``; pgrep on either name will miss the
     other, so we match the inner binary and rely on the wrapper having
-    already exec'd by the time we look.
+    already exec'd by the time we look. On Windows the executable is
+    ``vivaldi.exe``; ``tasklist /FI "IMAGENAME eq vivaldi.exe"`` matches it.
     """
-    return "Vivaldi" if _is_macos() else "vivaldi-bin"
+    if _is_macos():
+        return "Vivaldi"
+    if _is_windows():
+        return "vivaldi.exe"
+    return "vivaldi-bin"
+
+
+def _vivaldi_pids_windows() -> list[str]:
+    """Get Vivaldi PIDs using ``tasklist`` on Windows."""
+    try:
+        out = subprocess.check_output(
+            ["tasklist", "/FI", f"IMAGENAME eq {_vivaldi_proc_name()}",
+             "/FO", "CSV", "/NH"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    pids: list[str] = []
+    for line in out.decode("utf-8", "replace").strip().splitlines():
+        if line.startswith(f'"{_vivaldi_proc_name()}"'):
+            parts = line.split(",")
+            if len(parts) >= 2:
+                pids.append(parts[1].strip('"'))
+    return pids
 
 
 def vivaldi_running() -> bool:
+    if _is_windows():
+        return bool(_vivaldi_pids_windows())
     try:
         subprocess.check_output(
             ["pgrep", "-x", _vivaldi_proc_name()], stderr=subprocess.DEVNULL
@@ -75,6 +105,8 @@ def vivaldi_running() -> bool:
 
 
 def _vivaldi_pids() -> list[str]:
+    if _is_windows():
+        return _vivaldi_pids_windows()
     try:
         out = subprocess.check_output(
             ["pgrep", "-x", _vivaldi_proc_name()], stderr=subprocess.DEVNULL
@@ -87,6 +119,19 @@ def _vivaldi_pids() -> list[str]:
 def _read_cmdline(pid: str) -> list[str] | None:
     """Recover the argv for a running Vivaldi process. Same platform
     split as brave.utils._read_cmdline — see there for why."""
+    if _is_windows():
+        try:
+            out = subprocess.check_output(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine",
+                ],
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+        line = out.decode("utf-8", "replace").strip()
+        return [line] if line else None
     if _is_macos():
         try:
             out = subprocess.check_output(
@@ -121,31 +166,49 @@ def find_main_vivaldi_cmdline() -> list[str] | None:
 
 
 def kill_vivaldi_and_wait(timeout: float = 5.0) -> None:
-    subprocess.run(
-        ["pkill", "-KILL", "-x", _vivaldi_proc_name()], stderr=subprocess.DEVNULL
-    )
+    if _is_windows():
+        subprocess.run(
+            ["taskkill", "/F", "/IM", _vivaldi_proc_name()],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        subprocess.run(
+            ["pkill", "-KILL", "-x", _vivaldi_proc_name()], stderr=subprocess.DEVNULL
+        )
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not vivaldi_running():
             return
         time.sleep(0.1)
-    sys.exit(f"error: Vivaldi still running after SIGKILL + {timeout}s wait")
+    sys.exit(f"error: Vivaldi still running after force-kill + {timeout}s wait")
 
 
 def restart_vivaldi(captured_cmdline: list[str]) -> list[str]:
     """Restart Vivaldi the way the OS expects.
 
-    macOS: `open -a "Vivaldi"` so Launch Services starts the .app
-    bundle properly (re-registers URL handlers, restores dock state).
-    Captured argv[1:] is forwarded via `--args`.
+    Windows: launch ``vivaldi.exe`` from the standard install location
+    (``%LOCALAPPDATA%\\Vivaldi\\Application\\vivaldi.exe``). Falls back
+    to the captured command line if the known path doesn't exist.
 
-    Linux: prefer the `vivaldi` wrapper script in PATH over the captured
-    argv[0] (which is `vivaldi-bin` after the wrapper has exec'd into
+    macOS: ``open -a "Vivaldi"`` so Launch Services starts the .app
+    bundle properly (re-registers URL handlers, restores dock state).
+    Captured argv[1:] is forwarded via ``--args``.
+
+    Linux: prefer the ``vivaldi`` wrapper script in PATH over the captured
+    argv[0] (which is ``vivaldi-bin`` after the wrapper has exec'd into
     it). Launching the inner binary directly bypasses the wrapper's
     PATH/env setup that Vivaldi expects for things like default-browser
     registration.
     """
-    if _is_macos():
+    if _is_windows():
+        local = os.environ.get("LOCALAPPDATA", "")
+        known_exe = Path(local) / "Vivaldi" / "Application" / "vivaldi.exe"
+        if local and known_exe.exists():
+            cmdline = [str(known_exe)]
+        else:
+            cmdline = list(captured_cmdline)
+    elif _is_macos():
         cmdline = ["open", "-a", "Vivaldi"]
         forwarded = captured_cmdline[1:]
         if forwarded:
