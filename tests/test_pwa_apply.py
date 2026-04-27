@@ -122,7 +122,8 @@ def fake_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 return subprocess.CompletedProcess(cmd, 0)
             return real_run(cmd, *args, **kwargs)
 
-        monkeypatch.setattr(brave_pkg.subprocess, "run", fake_run)
+        from dotbrowser._base import orchestrator as orch
+        monkeypatch.setattr(orch.subprocess, "run", fake_run)
     return fake_path
 
 

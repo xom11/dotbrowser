@@ -1,7 +1,8 @@
-"""Vivaldi PWA -- browser-specific config + thin wrappers."""
+"""Edge PWA -- browser-specific config + thin wrappers."""
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,10 +14,10 @@ NAMESPACE = _base.NAMESPACE
 POLICY_KEY = _base.POLICY_KEY
 
 _PWA_CONFIG = _base.PwaConfig(
-    browser_name="vivaldi",
-    linux_policy_path="/etc/vivaldi/policies/managed/dotbrowser-pwa.json",
-    macos_plist_path="/Library/Managed Preferences/com.vivaldi.Vivaldi.plist",
-    windows_registry_key=r"Software\Policies\Vivaldi",
+    browser_name="edge",
+    linux_policy_path="/etc/opt/edge/policies/managed/dotbrowser-pwa.json",
+    macos_plist_path="/Library/Managed Preferences/com.microsoft.Edge.plist",
+    windows_registry_key=r"Software\Policies\Microsoft\Edge",
 )
 
 POLICY_FILE = _base.default_policy_file(_PWA_CONFIG)
@@ -28,7 +29,6 @@ def _read_existing_payload() -> dict:
 
 
 def _read_current_policy() -> dict[str, dict]:
-    """Chain through local _read_existing_payload so patches propagate."""
     data = _read_existing_payload()
     entries = data.get(POLICY_KEY, [])
     if not isinstance(entries, list):
@@ -44,10 +44,6 @@ def _build_policy_payload(entries: list[dict]) -> bytes:
     return _base.build_policy_payload(POLICY_FILE, _WINDOWS_POLICY_KEY, entries)
 
 
-def _entry_for(url: str) -> dict[str, Any]:
-    return _base.entry_for(url)
-
-
 def _sudo_write_policy(entries: list[dict]) -> None:
     _base.sudo_write_policy(POLICY_FILE, _WINDOWS_POLICY_KEY, entries)
 
@@ -60,10 +56,6 @@ def diff_summary(current: dict[str, dict], target_urls: list[str]) -> list[str]:
     return _base.diff_summary(current, target_urls)
 
 
-def _check_platform_supported() -> None:
-    _base.check_platform_supported(POLICY_FILE)
-
-
 def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     return _base.plan_apply(
         _PWA_CONFIG, POLICY_FILE, _sudo_write_policy,
@@ -73,13 +65,13 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
 
 def cmd_dump(args: argparse.Namespace) -> None:
     _base.cmd_dump(
-        "vivaldi", POLICY_FILE, _WINDOWS_POLICY_KEY,
+        "edge", POLICY_FILE, _WINDOWS_POLICY_KEY,
         _read_current_policy, args,
     )
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
     _base.register(
-        "vivaldi", POLICY_FILE, _WINDOWS_POLICY_KEY,
+        "edge", POLICY_FILE, _WINDOWS_POLICY_KEY,
         _read_current_policy, cmd_dump, subparsers,
     )

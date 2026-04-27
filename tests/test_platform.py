@@ -73,8 +73,6 @@ def _make_brave_profile(root: Path) -> None:
 def test_default_profile_root_linux_picks_snap_when_only_snap_has_data(
     monkeypatch, tmp_path
 ) -> None:
-    """On a Snap-only Ubuntu install (`sudo snap install brave`, no .deb),
-    the profile lives at `~/snap/brave/current/.config/...`. Auto-detect it."""
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     snap_root = tmp_path / "snap" / "brave" / "current" / ".config" / "BraveSoftware" / "Brave-Browser"
@@ -88,10 +86,6 @@ def test_default_profile_root_linux_picks_snap_when_only_snap_has_data(
 def test_default_profile_root_linux_prefers_direct_install_over_snap(
     monkeypatch, tmp_path
 ) -> None:
-    """If both .deb and Snap have populated profiles, pick .deb — that
-    matches what `which brave-browser` resolves to on a dual-install
-    machine, so users running dotbrowser get the same browser they're
-    already interacting with from the terminal."""
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     deb_root = tmp_path / ".config" / "BraveSoftware" / "Brave-Browser"
@@ -107,9 +101,6 @@ def test_default_profile_root_linux_prefers_direct_install_over_snap(
 def test_default_profile_root_linux_falls_back_to_direct_when_neither_populated(
     monkeypatch, tmp_path
 ) -> None:
-    """Brand-new machine with no install populated: return the .deb path
-    so the eventual `Preferences not found at ...` error message points
-    at the location most users would expect."""
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     deb_root = tmp_path / ".config" / "BraveSoftware" / "Brave-Browser"
@@ -122,8 +113,6 @@ def test_default_profile_root_linux_falls_back_to_direct_when_neither_populated(
 def test_default_profile_root_linux_picks_flatpak_when_only_flatpak_has_data(
     monkeypatch, tmp_path
 ) -> None:
-    """Flatpak Brave puts its profile under `~/.var/app/com.brave.Browser/
-    config/...`. Auto-detect it the same way we do Snap."""
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     flatpak_root = (
@@ -138,11 +127,10 @@ def test_default_profile_root_linux_picks_flatpak_when_only_flatpak_has_data(
 
 
 def test_restart_uses_flatpak_run_for_flatpak_brave(monkeypatch) -> None:
-    """A captured cmdline starting with `/app/brave/...` came from inside
-    a Flatpak bwrap sandbox and the path is unreachable from the host.
-    Restart has to go back through `flatpak run com.brave.Browser`."""
     monkeypatch.setattr("sys.platform", "linux")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
     captured = {}
@@ -151,7 +139,7 @@ def test_restart_uses_flatpak_run_for_flatpak_brave(monkeypatch) -> None:
         def __init__(self, cmd, **kwargs):
             captured["cmd"] = cmd
 
-    monkeypatch.setattr(utils.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(bp.subprocess, "Popen", FakePopen)
     used = utils.restart_brave([
         "/app/brave/brave",
         "--disable-features=Foo",
@@ -166,9 +154,6 @@ def test_restart_uses_flatpak_run_for_flatpak_brave(monkeypatch) -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Snap does not exist on Windows")
 def test_pwa_refuses_snap_install(tmp_path) -> None:
-    """`[pwa]` writes to /etc/brave/policies/managed/, which Snap's
-    sandbox doesn't read — refuse upfront so users don't get a sudo
-    prompt that silently has no effect."""
     from dotbrowser.brave import pwa
     snap_prefs = (
         tmp_path / "snap" / "brave" / "current" / ".config" / "BraveSoftware"
@@ -192,9 +177,6 @@ def test_pwa_refuses_flatpak_install(tmp_path) -> None:
 
 
 def test_pwa_accepts_direct_install(tmp_path, monkeypatch) -> None:
-    """Direct .deb/.rpm/etc install must NOT be refused — that's the
-    primary supported path. Stub the policy read so the test doesn't
-    touch /etc/."""
     from dotbrowser.brave import pwa
     monkeypatch.setattr(pwa, "_read_current_policy", lambda: [])
     deb_prefs = (
@@ -217,11 +199,10 @@ def test_proc_name_per_platform(monkeypatch, platform, expected_name) -> None:
 
 
 def test_restart_uses_open_on_macos(monkeypatch) -> None:
-    """On macOS, restart_brave should shell out to `open -a "Brave Browser"`
-    rather than launching the captured argv[0] directly. We capture the
-    Popen call instead of actually spawning anything."""
     monkeypatch.setattr("sys.platform", "darwin")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
     captured = {}
@@ -231,7 +212,7 @@ def test_restart_uses_open_on_macos(monkeypatch) -> None:
             captured["cmd"] = cmd
             captured["kwargs"] = kwargs
 
-    monkeypatch.setattr(utils.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(bp.subprocess, "Popen", FakePopen)
     used = utils.restart_brave([
         "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
         "--enable-features=Foo",
@@ -242,19 +223,13 @@ def test_restart_uses_open_on_macos(monkeypatch) -> None:
     assert "--args" in used
     assert "--enable-features=Foo" in used
     assert captured["cmd"] == used
-    # Should detach from the current shell so dotbrowser can exit
     assert captured["kwargs"].get("start_new_session") is True
 
 
 def test_read_cmdline_macos_does_not_shlex_split(monkeypatch) -> None:
-    """Regression: the macOS executable path contains literal spaces
-    (`/Applications/Brave Browser.app/Contents/MacOS/Brave Browser`). Earlier
-    code shlex-split the `ps -o command=` output, which mangled the path
-    into 4 garbage tokens and broke `restart_brave`. Now we keep it as a
-    single element."""
     monkeypatch.setattr("sys.platform", "darwin")
-    from dotbrowser.brave import utils
-    importlib.reload(utils)
+    from dotbrowser._base import process as bp
+    importlib.reload(bp)
 
     raw = b"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser\n"
 
@@ -262,17 +237,19 @@ def test_read_cmdline_macos_does_not_shlex_split(monkeypatch) -> None:
         assert cmd[0] == "ps"
         return raw
 
-    monkeypatch.setattr(utils.subprocess, "check_output", fake_check_output)
-    out = utils._read_cmdline("12345")
+    monkeypatch.setattr(bp.subprocess, "check_output", fake_check_output)
+    out = bp._read_cmdline("12345")
     assert out == ["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"]
 
 
 def test_restart_uses_wrapper_on_linux(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "linux")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
-    monkeypatch.setattr(utils.shutil, "which", lambda name: "/usr/bin/brave-browser" if name == "brave-browser" else None)
+    monkeypatch.setattr(bp.shutil, "which", lambda name: "/usr/bin/brave-browser" if name == "brave-browser" else None)
 
     captured = {}
 
@@ -280,9 +257,8 @@ def test_restart_uses_wrapper_on_linux(monkeypatch) -> None:
         def __init__(self, cmd, **kwargs):
             captured["cmd"] = cmd
 
-    monkeypatch.setattr(utils.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(bp.subprocess, "Popen", FakePopen)
     used = utils.restart_brave(["/opt/brave.com/brave/brave", "--flag=1"])
-    # Inner binary swapped for wrapper
     assert used[0] == "/usr/bin/brave-browser"
     assert "--flag=1" in used
 
@@ -291,9 +267,10 @@ def test_restart_uses_wrapper_on_linux(monkeypatch) -> None:
 
 
 def test_brave_running_windows(monkeypatch) -> None:
-    """On Windows, brave_running() delegates to tasklist."""
     monkeypatch.setattr("sys.platform", "win32")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
     csv_output = b'"brave.exe","14796","Console","1","288,820 K"\r\n'
@@ -302,26 +279,29 @@ def test_brave_running_windows(monkeypatch) -> None:
         assert "tasklist" in cmd
         return csv_output
 
-    monkeypatch.setattr(utils.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(bp.subprocess, "check_output", fake_check_output)
     assert utils.brave_running() is True
 
 
 def test_brave_running_windows_not_running(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "win32")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
     def fake_check_output(cmd, **kwargs):
-        # tasklist returns non-zero when no processes match the filter
-        raise utils.subprocess.CalledProcessError(1, cmd)
+        raise bp.subprocess.CalledProcessError(1, cmd)
 
-    monkeypatch.setattr(utils.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(bp.subprocess, "check_output", fake_check_output)
     assert utils.brave_running() is False
 
 
 def test_brave_pids_windows(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "win32")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
     csv_output = (
@@ -332,16 +312,15 @@ def test_brave_pids_windows(monkeypatch) -> None:
     def fake_check_output(cmd, **kwargs):
         return csv_output
 
-    monkeypatch.setattr(utils.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(bp.subprocess, "check_output", fake_check_output)
     pids = utils._brave_pids()
     assert pids == ["14796", "18928"]
 
 
 def test_read_cmdline_windows(monkeypatch) -> None:
-    """On Windows, _read_cmdline uses PowerShell Get-CimInstance."""
     monkeypatch.setattr("sys.platform", "win32")
-    from dotbrowser.brave import utils
-    importlib.reload(utils)
+    from dotbrowser._base import process as bp
+    importlib.reload(bp)
 
     raw = b'"C:\\Users\\test\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"\r\n'
 
@@ -349,8 +328,8 @@ def test_read_cmdline_windows(monkeypatch) -> None:
         assert "powershell" in cmd
         return raw
 
-    monkeypatch.setattr(utils.subprocess, "check_output", fake_check_output)
-    out = utils._read_cmdline("14796")
+    monkeypatch.setattr(bp.subprocess, "check_output", fake_check_output)
+    out = bp._read_cmdline("14796")
     assert out is not None
     assert len(out) == 1
     assert "brave.exe" in out[0]
@@ -358,18 +337,20 @@ def test_read_cmdline_windows(monkeypatch) -> None:
 
 def test_kill_uses_taskkill_on_windows(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "win32")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
     captured = {}
 
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
-        return utils.subprocess.CompletedProcess(cmd, 0)
+        return bp.subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr(utils.subprocess, "run", fake_run)
-    # Also stub brave_running to return False immediately (so the wait loop exits)
-    monkeypatch.setattr(utils, "brave_running", lambda: False)
+    monkeypatch.setattr(bp.subprocess, "run", fake_run)
+    # Patch running() on the BrowserProcess to return False so the wait loop exits
+    monkeypatch.setattr(utils.BROWSER_PROCESS, "running", lambda: False)
     utils.kill_brave_and_wait()
     assert captured["cmd"][0] == "taskkill"
     assert "/F" in captured["cmd"]
@@ -378,13 +359,12 @@ def test_kill_uses_taskkill_on_windows(monkeypatch) -> None:
 
 
 def test_restart_windows_uses_known_exe(monkeypatch, tmp_path) -> None:
-    """On Windows, restart_brave launches brave.exe from the standard
-    install location."""
     monkeypatch.setattr("sys.platform", "win32")
+    from dotbrowser._base import process as bp
     from dotbrowser.brave import utils
+    importlib.reload(bp)
     importlib.reload(utils)
 
-    # Create a fake brave.exe at the expected path
     fake_local = tmp_path / "AppData" / "Local"
     brave_dir = fake_local / "BraveSoftware" / "Brave-Browser" / "Application"
     brave_dir.mkdir(parents=True)
@@ -398,7 +378,7 @@ def test_restart_windows_uses_known_exe(monkeypatch, tmp_path) -> None:
         def __init__(self, cmd, **kwargs):
             captured["cmd"] = cmd
 
-    monkeypatch.setattr(utils.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(bp.subprocess, "Popen", FakePopen)
     used = utils.restart_brave(["captured-cmdline"])
     assert str(brave_exe) in used[0]
     assert captured["cmd"] == used

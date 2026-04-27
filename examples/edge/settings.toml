@@ -1,0 +1,14 @@
+# `dotbrowser edge apply` -- UI / behaviour settings only.
+# Keys are dotted paths into Edge's profile `Preferences` JSON.
+# MAC-protected keys (homepage, default search, etc.) will be refused.
+
+[settings]
+
+# Address bar.
+"omnibox.prevent_url_elisions"       = true   # Always show full URLs
+
+# Bookmarks bar.
+"bookmark_bar.show_on_all_tabs"      = false  # Hide bookmarks bar
+
+# New Tab Page.
+"ntp.shortcust_visible"              = false  # Hide top-sites shortcut row

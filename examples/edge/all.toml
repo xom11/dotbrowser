@@ -1,0 +1,26 @@
+# `dotbrowser edge apply` -- settings and PWA in one file.
+# One apply = one backup + write cycle. Edge does not support custom
+# keyboard shortcuts via Preferences, so there is no [shortcuts] table.
+#
+# Table semantics:
+#   - missing header  -> module skipped, managed entries left alone.
+#   - empty body      -> all previously-managed entries reset / popped.
+
+[settings]
+
+# Address bar.
+"omnibox.prevent_url_elisions"       = true
+
+# Bookmarks bar.
+"bookmark_bar.show_on_all_tabs"      = false
+
+# New Tab Page.
+"ntp.shortcust_visible"              = false
+
+# [pwa] -- left commented out so the quick-start `apply` doesn't pull in
+# extra apps + a sudo prompt. Uncomment and add URLs to enable.
+#
+# [pwa]
+# urls = [
+#   "https://squoosh.app/",
+# ]
