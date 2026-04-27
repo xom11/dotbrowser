@@ -247,6 +247,158 @@ def test_make_browser_process_no_flatpak_for_non_stable() -> None:
     assert _make_browser_process("nightly").flatpak_app_id is None
 
 
+def test_linux_pid_filter_set_for_non_stable_only() -> None:
+    """Stable keeps the permissive `pgrep`-only behavior so Snap/Flatpak
+    installs aren't falsely excluded.  Beta/Nightly use a path filter
+    so a beta apply doesn't kill stable (and vice versa)."""
+    from dotbrowser.brave.utils import _make_browser_process
+    assert _make_browser_process("stable").linux_pid_filter is None
+    assert _make_browser_process("beta").linux_pid_filter == (
+        "/opt/brave.com/brave-beta/"
+    )
+    assert _make_browser_process("nightly").linux_pid_filter == (
+        "/opt/brave.com/brave-nightly/"
+    )
+
+
+def test_pids_filters_by_linux_pid_filter(monkeypatch) -> None:
+    """With `linux_pid_filter` set on Linux, `pids()` drops pids whose
+    argv[0] doesn't contain the filter substring.  This is the
+    load-bearing piece that prevents a beta `pkill` from hitting stable.
+    """
+    monkeypatch.setattr("sys.platform", "linux")
+    from dotbrowser._base import process as bp
+    importlib.reload(bp)
+
+    # pgrep returns three pids — two beta, one stable
+    monkeypatch.setattr(
+        bp.subprocess, "check_output", lambda *a, **kw: b"100\n200\n300\n",
+    )
+
+    cmdlines = {
+        "100": ["/opt/brave.com/brave-beta/brave", "--type=renderer"],
+        "200": ["/opt/brave.com/brave-beta/brave"],
+        "300": ["/opt/brave.com/brave/brave"],  # stable
+    }
+    monkeypatch.setattr(bp, "_read_cmdline", lambda pid: cmdlines.get(pid))
+
+    proc = bp.BrowserProcess(
+        display_name="Brave Beta",
+        proc_name_linux="brave",
+        proc_name_macos="Brave Browser Beta",
+        proc_name_windows="brave.exe",
+        macos_app_name="Brave Browser Beta",
+        linux_wrappers=["brave-browser-beta"],
+        windows_exe_relpath=("BraveSoftware", "Brave-Browser-Beta", "Application", "brave.exe"),
+        linux_pid_filter="/opt/brave.com/brave-beta/",
+    )
+    assert proc.pids() == ["100", "200"]
+    assert proc.running() is True
+
+
+def test_pids_filter_returns_empty_when_only_other_channel_running(monkeypatch) -> None:
+    """If only stable is running, beta's `running()` must return False
+    (the existing `pgrep` answer would have been True)."""
+    monkeypatch.setattr("sys.platform", "linux")
+    from dotbrowser._base import process as bp
+    importlib.reload(bp)
+
+    monkeypatch.setattr(
+        bp.subprocess, "check_output", lambda *a, **kw: b"500\n",
+    )
+    monkeypatch.setattr(
+        bp, "_read_cmdline",
+        lambda pid: ["/opt/brave.com/brave/brave"],  # stable only
+    )
+
+    proc = bp.BrowserProcess(
+        display_name="Brave Nightly",
+        proc_name_linux="brave",
+        proc_name_macos="Brave Browser Nightly",
+        proc_name_windows="brave.exe",
+        macos_app_name="Brave Browser Nightly",
+        linux_wrappers=["brave-browser-nightly"],
+        windows_exe_relpath=("BraveSoftware", "Brave-Browser-Nightly", "Application", "brave.exe"),
+        linux_pid_filter="/opt/brave.com/brave-nightly/",
+    )
+    assert proc.pids() == []
+    assert proc.running() is False
+
+
+def test_kill_and_wait_uses_scoped_kill_when_filter_set(monkeypatch) -> None:
+    """When `linux_pid_filter` is set, `kill_and_wait` must NOT issue
+    `pkill -x brave` (which would kill every channel).  It should
+    `kill -KILL <pid>...` against only the filtered set.
+    """
+    monkeypatch.setattr("sys.platform", "linux")
+    from dotbrowser._base import process as bp
+    importlib.reload(bp)
+
+    monkeypatch.setattr(
+        bp.subprocess, "check_output", lambda *a, **kw: b"42\n",
+    )
+    monkeypatch.setattr(
+        bp, "_read_cmdline",
+        lambda pid: ["/opt/brave.com/brave-beta/brave"],
+    )
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured.setdefault("calls", []).append(list(cmd))
+        return bp.subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(bp.subprocess, "run", fake_run)
+
+    proc = bp.BrowserProcess(
+        display_name="Brave Beta",
+        proc_name_linux="brave",
+        proc_name_macos="Brave Browser Beta",
+        proc_name_windows="brave.exe",
+        macos_app_name="Brave Browser Beta",
+        linux_wrappers=["brave-browser-beta"],
+        windows_exe_relpath=("BraveSoftware", "Brave-Browser-Beta", "Application", "brave.exe"),
+        linux_pid_filter="/opt/brave.com/brave-beta/",
+    )
+    # After the kill, pretend the process is gone so the wait loop exits.
+    monkeypatch.setattr(proc, "running", lambda: False)
+    proc.kill_and_wait()
+
+    # Exactly one kill call, scoped to the filtered pid -- no pkill.
+    assert captured["calls"] == [["kill", "-KILL", "42"]]
+
+
+def test_kill_and_wait_keeps_pkill_when_no_filter(monkeypatch) -> None:
+    """Stable Brave keeps the `pkill -x brave` path so Snap/Flatpak
+    installs (which the filter would exclude) still get killed."""
+    monkeypatch.setattr("sys.platform", "linux")
+    from dotbrowser._base import process as bp
+    importlib.reload(bp)
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured.setdefault("calls", []).append(list(cmd))
+        return bp.subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(bp.subprocess, "run", fake_run)
+
+    proc = bp.BrowserProcess(
+        display_name="Brave",
+        proc_name_linux="brave",
+        proc_name_macos="Brave Browser",
+        proc_name_windows="brave.exe",
+        macos_app_name="Brave Browser",
+        linux_wrappers=["brave-browser"],
+        windows_exe_relpath=("BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+        linux_pid_filter=None,
+    )
+    monkeypatch.setattr(proc, "running", lambda: False)
+    proc.kill_and_wait()
+
+    assert captured["calls"] == [["pkill", "-KILL", "-x", "brave"]]
+
+
 def test_restart_uses_flatpak_run_for_flatpak_brave(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "linux")
     from dotbrowser._base import process as bp

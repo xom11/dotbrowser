@@ -30,11 +30,16 @@ def _make_browser_process(channel: str = "stable") -> BrowserProcess:
 
     Linux note: all channels share the inner binary basename ``brave``
     (each channel installs to ``/opt/brave.com/brave{,-beta,-nightly}/``
-    but the executable inside is always ``brave``).  This means
-    ``pgrep -x brave`` on Linux can't distinguish channels -- if the
-    user has stable + beta running simultaneously, ``running()``
-    returns True regardless of which channel they targeted.  macOS and
-    Windows have channel-distinct names (``Brave Browser Beta`` and
+    but the executable inside is always ``brave``).  ``pgrep -x brave``
+    on Linux can't distinguish channels by name, so for non-stable
+    channels we narrow the pid set with ``linux_pid_filter`` -- pids
+    whose argv[0] doesn't contain ``/opt/brave.com/brave-{channel}/``
+    are dropped before we ``pkill``, so a beta apply doesn't kill the
+    user's running stable Brave (and vice versa).  Stable keeps the
+    permissive behavior because Snap/Flatpak installs use other paths
+    (``/snap/brave/...`` / ``/app/brave/...``) that a filter would
+    falsely exclude.  macOS and Windows have channel-distinct names
+    already (``Brave Browser Beta`` and
     ``Brave-Browser-Beta\\Application\\brave.exe`` respectively).
     """
     pretty = _CHANNEL_PRETTY[channel]
@@ -57,6 +62,9 @@ def _make_browser_process(channel: str = "stable") -> BrowserProcess:
         ),
         flatpak_prefix="/app/brave/" if is_stable else None,
         flatpak_app_id="com.brave.Browser" if is_stable else None,
+        linux_pid_filter=(
+            None if is_stable else f"/opt/brave.com/brave{lower}/"
+        ),
     )
 
 

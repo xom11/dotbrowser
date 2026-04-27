@@ -76,6 +76,7 @@ class BrowserProcess:
         windows_exe_relpath: tuple[str, ...],
         flatpak_prefix: str | None = None,
         flatpak_app_id: str | None = None,
+        linux_pid_filter: str | None = None,
     ):
         self.display_name = display_name
         self.proc_name_linux = proc_name_linux
@@ -86,6 +87,14 @@ class BrowserProcess:
         self.windows_exe_relpath = windows_exe_relpath
         self.flatpak_prefix = flatpak_prefix
         self.flatpak_app_id = flatpak_app_id
+        # Linux-only argv[0] discriminator for browsers whose channels
+        # share a basename (e.g. all Brave channels install with the
+        # binary named "brave").  Pids whose argv[0] does not contain
+        # this substring are dropped from `pids()` and `running()` so
+        # `pkill -KILL -x` only fires on processes the user actually
+        # asked about.  None disables the filter (the default; keeps
+        # behavior unchanged for browsers without per-channel paths).
+        self.linux_pid_filter = linux_pid_filter
 
     def proc_name(self) -> str:
         if _is_macos():
@@ -115,13 +124,27 @@ class BrowserProcess:
     def running(self) -> bool:
         if _is_windows():
             return bool(self._pids_windows())
-        try:
-            subprocess.check_output(
-                ["pgrep", "-x", self.proc_name()], stderr=subprocess.DEVNULL
-            )
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
+        return bool(self.pids())
+
+    def _apply_linux_filter(self, pids: list[str]) -> list[str]:
+        """Drop pids whose argv[0] does not contain ``linux_pid_filter``.
+
+        Only invoked on Linux when the filter is set -- macOS uses
+        channel-distinct proc names already, and Windows uses
+        channel-distinct exe paths.  Pids whose cmdline can't be read
+        (raced exit, EPERM) are dropped; conservative (don't kill
+        what we can't identify).
+        """
+        if self.linux_pid_filter is None:
+            return pids
+        kept: list[str] = []
+        for pid in pids:
+            args = _read_cmdline(pid)
+            if not args:
+                continue
+            if self.linux_pid_filter in args[0]:
+                kept.append(pid)
+        return kept
 
     def pids(self) -> list[str]:
         if _is_windows():
@@ -130,9 +153,12 @@ class BrowserProcess:
             out = subprocess.check_output(
                 ["pgrep", "-x", self.proc_name()], stderr=subprocess.DEVNULL
             )
-            return out.decode().split()
         except (subprocess.CalledProcessError, FileNotFoundError):
             return []
+        raw = out.decode().split()
+        if not _is_macos() and self.linux_pid_filter is not None:
+            return self._apply_linux_filter(raw)
+        return raw
 
     def find_main_cmdline(self) -> list[str] | None:
         """The main browser process is the one without ``--type=...``."""
@@ -152,6 +178,16 @@ class BrowserProcess:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+        elif not _is_macos() and self.linux_pid_filter is not None:
+            # Channel-scoped kill: don't `pkill -x brave` (matches every
+            # channel) -- send SIGKILL only to the pids we already
+            # filtered to this channel.
+            scoped = self.pids()
+            if scoped:
+                subprocess.run(
+                    ["kill", "-KILL", *scoped],
+                    stderr=subprocess.DEVNULL,
+                )
         else:
             subprocess.run(
                 ["pkill", "-KILL", "-x", self.proc_name()],
