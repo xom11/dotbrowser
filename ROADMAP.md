@@ -52,10 +52,12 @@ items live in [issues](https://github.com/xom11/dotbrowser/issues).
 
 ## Feature ideas
 
-- **`<browser> restore [--from <backup>]`.** Backups already land at
-  `Preferences.bak.<timestamp>`. A `restore` subcommand picks the most
-  recent (or a named one) and copies it back. Saves users from `cp`
-  with the wrong path on macOS.
+- ~~**`<browser> restore [--from <backup>]`.**~~ ✅ Done — `restore`
+  picks the most recent backup (or `--from FILE`), copies it over
+  Preferences, and clears the shortcuts/settings sidecars. `--list`
+  enumerates available backups; `--dry-run` shows what would happen.
+  `[pwa]` policy file is intentionally out of scope (lives outside the
+  profile and isn't part of the per-apply backup).
 
 - **Dedicated `diff` subcommand.** Today the only preview is
   `apply --dry-run`, which reuses apply's output format. A real `diff`

@@ -245,6 +245,116 @@ def cmd_apply(
         )
 
 
+_RESTORE_SIDECAR_NAMES = (
+    "Preferences.dotbrowser.shortcuts.json",
+    "Preferences.dotbrowser.settings.json",
+)
+
+
+def cmd_restore(
+    args: argparse.Namespace,
+    *,
+    display_name: str,
+    running_fn: Callable[[], bool],
+    pids_fn: Callable[[], list[str]],
+    find_cmdline_fn: Callable[[], list[str] | None],
+    kill_fn: Callable[[], None],
+    restart_fn: Callable[[list[str]], list[str]],
+) -> None:
+    """Restore Preferences from a backup created by a prior ``apply``.
+
+    Resolves a backup file (most recent by mtime, or the one passed via
+    ``--from``), copies it back over Preferences, and clears the
+    shortcuts/settings sidecars so the next apply starts from a clean
+    "managed by dotbrowser" set.
+
+    [pwa] is intentionally out of scope -- the policy file lives outside
+    the profile and isn't part of the per-apply backup.  The user is
+    told to edit the managed-policy file manually if they regret a pwa
+    write.
+    """
+    prefs_path = find_preferences(args.profile_root, args.profile)
+    profile_dir = prefs_path.parent
+    backups = sorted(
+        profile_dir.glob(f"{prefs_path.name}.bak.*"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    if args.list:
+        if not backups:
+            print(f"no backups found next to {prefs_path}")
+            return
+        print(f"backups for {prefs_path}:")
+        for bk in backups:
+            ts = datetime.fromtimestamp(bk.stat().st_mtime).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            print(f"  {bk.name}  {ts}  ({bk.stat().st_size} bytes)")
+        return
+
+    if args.from_path:
+        backup = Path(args.from_path)
+        if not backup.exists():
+            sys.exit(f"error: backup not found: {backup}")
+    else:
+        if not backups:
+            sys.exit(
+                f"error: no backups found next to {prefs_path}.\n"
+                "(`apply` writes a timestamped backup on every run; "
+                "if you've never applied, there's nothing to restore.)"
+            )
+        backup = backups[0]
+
+    print(f"target:  {prefs_path}")
+    print(f"restore: {backup}")
+
+    if args.dry_run:
+        print("\n(dry-run, nothing written)")
+        return
+
+    saved_cmdline: list[str] | None = None
+    was_killed = False
+    if running_fn():
+        if not args.kill_browser:
+            sys.exit(
+                f"error: {display_name} is running. Close it first, "
+                f"or pass --kill-browser"
+            )
+        saved_cmdline = find_cmdline_fn()
+        pid_list = pids_fn()
+        print(f"killing {display_name} (pids: {' '.join(pid_list)})")
+        kill_fn()
+        was_killed = True
+
+    shutil.copy2(backup, prefs_path)
+    print(f"restored Preferences from {backup.name}")
+
+    # Clear sidecars so the next `apply` doesn't think the restored
+    # values are still under dotbrowser management -- they were the
+    # PRE-managed state when the backup was taken.
+    for sidecar in _RESTORE_SIDECAR_NAMES:
+        sp = profile_dir / sidecar
+        if sp.exists():
+            sp.unlink()
+            print(f"cleared {sidecar}")
+
+    print(
+        "note: [pwa] policy file is NOT affected by restore. If you "
+        "applied PWAs you no longer want, edit the managed-policy file "
+        "(see `<browser> pwa dump` for its location) manually."
+    )
+
+    if saved_cmdline:
+        used = restart_fn(saved_cmdline)
+        print(f"restarting {display_name}: {' '.join(used)}")
+    elif was_killed:
+        print(
+            f"{display_name} killed; could not capture original "
+            f"command line -- restart manually."
+        )
+
+
 def cmd_init(args: argparse.Namespace, browser_name: str, template: str) -> None:
     filename = args.output or f"{browser_name}.toml"
     text = template.replace("{filename}", filename)
@@ -266,6 +376,7 @@ def register_browser(
     default_profile_root: Path | None,
     cmd_apply_fn,
     cmd_init_fn=None,
+    cmd_restore_fn=None,
     module_registers: list,
     setup_profile_args: Callable[[argparse.ArgumentParser], None] | None = None,
     normalize_args: Callable[[argparse.Namespace], None] | None = None,
@@ -358,6 +469,32 @@ def register_browser(
         "prefs over our changes), apply, then restart it",
     )
     a.set_defaults(func=cmd_apply_fn)
+
+    if cmd_restore_fn is not None:
+        r = sub.add_parser(
+            "restore",
+            help="restore Preferences from a backup created by apply",
+        )
+        r.add_argument(
+            "--from",
+            dest="from_path",
+            metavar="FILE",
+            default=None,
+            help="path to a specific backup file (default: most recent)",
+        )
+        r.add_argument(
+            "--list",
+            action="store_true",
+            help="list available backups and exit",
+        )
+        r.add_argument("-n", "--dry-run", action="store_true")
+        r.add_argument(
+            "-k",
+            "--kill-browser",
+            action="store_true",
+            help=f"if {name} is running, force-kill it before restoring",
+        )
+        r.set_defaults(func=cmd_restore_fn)
 
     for mod_register in module_registers:
         mod_register(sub)
