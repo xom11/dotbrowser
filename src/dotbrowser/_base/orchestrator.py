@@ -34,8 +34,13 @@ _MAX_URL_CONFIG_BYTES = 256 * 1024
 
 
 def _load_toml(path: Path) -> dict:
-    with path.open("rb") as f:
-        return tomllib.load(f)
+    try:
+        with path.open("rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        sys.exit(f"error: config file not found: {path}")
+    except tomllib.TOMLDecodeError as e:
+        sys.exit(f"error: invalid TOML at {path}: {e}")
 
 
 def _looks_like_url(value: object) -> bool:
@@ -168,19 +173,20 @@ def cmd_apply(
                     "command prompt or PowerShell."
                 )
         else:
-            cached = subprocess.run(
-                ["sudo", "-n", "true"], stderr=subprocess.DEVNULL
-            ).returncode == 0
-            if not cached:
-                try:
+            try:
+                cached = subprocess.run(
+                    ["sudo", "-n", "true"], stderr=subprocess.DEVNULL
+                ).returncode == 0
+                if not cached:
                     subprocess.run(["sudo", "-v"], check=True)
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    sys.exit(
-                        "error: [pwa] requires sudo to write the managed-policy "
-                        f"file but auth failed: {e}\n"
-                        "(if running non-interactively, run `sudo -v` from a "
-                        "terminal first to cache credentials)"
-                    )
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                sys.exit(
+                    "error: [pwa] requires sudo to write the managed-policy "
+                    f"file but auth failed: {e}\n"
+                    "(if sudo isn't installed, [pwa] isn't supported on this "
+                    "platform; if running non-interactively, run `sudo -v` "
+                    "from a terminal first to cache credentials)"
+                )
 
     saved_cmdline: list[str] | None = None
     was_killed = False
