@@ -14,13 +14,24 @@ pip install -e ".[test]"
 # Run the CLI without installing the entry point (from repo root)
 PYTHONPATH=src python -m dotbrowser <args>
 
-# Apply both [shortcuts] and [settings] from a single TOML file
+# Scaffold a starter config
+dotbrowser brave init                    # stdout
+dotbrowser brave init -o brave.toml      # write to file
+
+# Apply [shortcuts], [settings] and [pwa] from a single TOML file
 dotbrowser brave apply examples/brave/all.toml
 
 # Read-only inspection lives under each module
 dotbrowser brave shortcuts list
 dotbrowser brave shortcuts dump
 dotbrowser brave settings dump
+dotbrowser brave pwa dump
+
+# Same commands work for vivaldi and edge
+dotbrowser vivaldi init
+dotbrowser vivaldi apply examples/vivaldi/all.toml
+dotbrowser edge init
+dotbrowser edge apply examples/edge/all.toml
 
 # Regenerate command_ids.py from upstream Chromium + brave-core headers
 # (requires `gh` CLI authenticated)
@@ -38,12 +49,13 @@ Tag-driven via `.github/workflows/release.yml`. Steps:
 
 Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]"`). Run with `pytest` from the repo root. The suite has three layers:
 
-- `test_logic.py` / `test_platform.py` — pure-logic unit tests, run anywhere. `test_platform.py` reloads `dotbrowser.brave.utils` (where the platform-aware process helpers live since the shortcuts/settings split).
+- `test_logic.py` / `test_platform.py` — pure-logic unit tests, run anywhere. `test_platform.py` patches `dotbrowser._base.process` (where the platform-aware `BrowserProcess` and `_read_cmdline` live) and reloads browser utils modules to test platform dispatch.
 - `test_smoke.py` — invokes the CLI as a subprocess against the real on-disk Brave profile (read-only `list`/`dump`/`apply --dry-run`). Skipped if no profile is found.
 - `test_apply_live.py` — synthesizes a fake `Preferences` and exercises the unified apply path with a `[shortcuts]`-only TOML.
 - `test_settings_apply.py` — same idea but `[settings]`-only; covers apply/refuse-MAC/drop-key, including the `protection.macs` parent-of-tracked-leaf refusal.
 - `test_unified_apply.py` — cross-module orchestration: combined diff, single backup per apply, settings-refusal blocking shortcuts write, missing-vs-empty table semantics, and the three-namespace (shortcuts + settings + pwa) round-trip.
 - `test_pwa_apply.py` — `[pwa]`-only end-to-end. Runs on Linux, macOS, and Windows. Redirects `pwa.POLICY_FILE` into `tmp_path` (Linux/macOS) or monkeypatches registry read/write to a temp JSON file (Windows) and stubs the privilege preflight, so the suite never touches `/etc/`, `/Library/`, the registry, or prompts for credentials.
+- `test_edge_apply.py` — Edge settings apply, MAC refusal, dry-run, empty-config error, and `init` command. Same pattern as the Brave apply tests but for Edge (settings + pwa only, no shortcuts).
 
 The `--kill-browser` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
@@ -51,34 +63,74 @@ The `--kill-browser` path is intentionally NOT covered by pytest (it would inter
 
 **CLI shape: `dotbrowser <BROWSER> [browser-options] <ACTION> [args]`**
 
-`apply` is at the browser level — one command writes `[shortcuts]`, `[settings]` and `[pwa]` from a single TOML file in a single backup + write cycle. Per-module subcommands (`shortcuts`, `settings`, `pwa`) only host read-only inspection actions (`dump`, `list`).
+Supported browsers: **Brave** (shortcuts + settings + pwa), **Vivaldi** (shortcuts + settings + pwa), **Edge** (settings + pwa). Edge does not support custom keyboard shortcuts via Preferences.
+
+`apply` is at the browser level -- one command writes `[shortcuts]`, `[settings]` and `[pwa]` from a single TOML file in a single backup + write cycle. `init` scaffolds a starter config. Per-module subcommands (`shortcuts`, `settings`, `pwa`) only host read-only inspection actions (`dump`, `list`).
+
+### Shared base (`_base/`)
+
+Most logic is shared across all Chromium-based browsers in `src/dotbrowser/_base/`:
 
 ```
-cli.py           → mounts brave/__init__.py::register
-brave/__init__   → adds `apply` action; mounts brave/shortcuts.py + brave/settings.py
-                   + brave/pwa.py for read-only inspection. Holds the I/O cycle
-                   (sudo-preflight, kill-browser, backup, write_atomic, run
-                   external_apply_fns, write state files, verify, restart).
-brave/shortcuts  → exposes `plan_apply(prefs_path, prefs, raw_table) -> Plan`
-                   plus dump/list CLI actions.
-brave/settings   → exposes `plan_apply(prefs_path, prefs, raw_table) -> Plan`
-                   plus dump CLI action.
-brave/pwa        → exposes `plan_apply(prefs_path, prefs, raw_table) -> Plan`
-                   plus dump CLI action. Sets `external_apply_fn` to sudo-write
-                   `/etc/brave/policies/managed/dotbrowser-pwa.json`; leaves
-                   apply_fn/verify_fn/state_path empty since pwa state lives
-                   outside the profile.
-brave/utils      → shared helpers (process detection, kill/restart, write_atomic,
-                   get_nested) and the `Plan` dataclass.
+_base/utils.py        -> Plan dataclass, find_preferences, load_prefs,
+                         write_atomic, get_nested.
+_base/process.py      -> BrowserProcess class: parameterized process
+                         detection, kill, restart per platform. Each
+                         browser creates one instance with its names/paths.
+_base/settings.py     -> Full settings module logic (MAC refusal,
+                         plan_apply, cmd_dump, register). Browser modules
+                         pass browser_name for user-facing strings.
+_base/pwa.py          -> Full PWA logic (validation, diff, policy
+                         read/write, plan_apply). Browser modules provide
+                         PwaConfig with paths and keep module-level
+                         POLICY_FILE / _sudo_write_policy for testability.
+_base/orchestrator.py -> cmd_apply (TOML loading, preflight, kill, backup,
+                         write, verify, restart), cmd_init, register_browser.
 ```
 
-**The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure — validates the TOML table, reads existing state, computes the diff, and returns a `Plan` with `namespace`, `diff_lines`, `apply_fn(prefs)`, `verify_fn(reloaded)`, plus optional `state_path`/`state_payload` (for sidecar persistence) and optional `external_apply_fn` (for side effects outside `Preferences`, like pwa's policy file write). The orchestrator collects plans, prints the combined diff, runs a sudo preflight if any plan has an `external_apply_fn`, then in order: kills Brave (if needed), backs up Preferences, runs all `apply_fn`s against one in-memory dict, `write_atomic`, runs all `external_apply_fn`s, writes state sidecars, runs `verify_fn`s. This guarantees: one backup per apply, no partial writes if any module rejects, sudo prompts come *before* the kill so an auth failure doesn't strand the user with a dead browser, and a single kill-browser + restart cycle.
+### Per-browser modules
+
+Each browser is a thin wrapper that configures `_base/`:
+
+```
+cli.py              -> mounts brave, vivaldi, edge via register()
+brave/__init__      -> _default_profile_root, _build_plans, _INIT_TEMPLATE,
+                       cmd_apply (passes callbacks to _base orchestrator),
+                       cmd_init, register.
+brave/shortcuts     -> Brave-specific (numeric command IDs, Meta+/Command+
+                       rewrite). Not shared -- each browser's shortcut
+                       format differs.
+brave/settings      -> thin wrapper: delegates to _base/settings with
+                       browser_name="brave".
+brave/pwa           -> thin wrapper: configures PwaConfig with Brave paths,
+                       keeps POLICY_FILE / _sudo_write_policy as patchable
+                       module attrs, delegates to _base/pwa.
+brave/utils         -> BROWSER_PROCESS config + backward-compat aliases
+                       (brave_running, restart_brave, etc.).
+brave/command_ids   -> auto-generated IDC_* -> numeric ID mapping.
+```
+
+Vivaldi follows the same pattern. Edge is simpler (no shortcuts module).
+
+**The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure -- validates the TOML table, reads existing state, computes the diff, and returns a `Plan` with `namespace`, `diff_lines`, `apply_fn(prefs)`, `verify_fn(reloaded)`, plus optional `state_path`/`state_payload` (for sidecar persistence) and optional `external_apply_fn` (for side effects outside `Preferences`, like pwa's policy file write). The orchestrator collects plans, prints the combined diff, runs a sudo preflight if any plan has an `external_apply_fn`, then in order: kills the browser (if needed), backs up Preferences, runs all `apply_fn`s against one in-memory dict, `write_atomic`, runs all `external_apply_fn`s, writes state sidecars, runs `verify_fn`s. This guarantees: one backup per apply, no partial writes if any module rejects, sudo prompts come *before* the kill so an auth failure doesn't strand the user with a dead browser, and a single kill-browser + restart cycle.
+
+**Process callbacks are resolved at call time** in each browser's `cmd_apply` wrapper (not captured at import time), so test monkeypatching of `brave_pkg.brave_running` etc. takes effect. This is why each browser re-exports its process functions in `__init__.py` and passes them to the shared orchestrator.
 
 **TOML table semantics for unified apply:**
 - **Missing table** (no `[settings]` header): module is skipped entirely. State file untouched. This is the safe default for users who only manage one namespace.
 - **Empty table** (`[settings]` followed by nothing): all previously-managed entries are reset (popped or reverted to default). State file becomes empty. This is the explicit "wipe my managed entries" gesture. The same rule applies to `[shortcuts]`.
 
-To add a new browser: create `src/dotbrowser/<name>/__init__.py` with `register(subparsers)` and call it from `cli.py::build_parser`. To add a new module under an existing browser: implement `plan_apply()` returning a `Plan`, register it in the browser's `_build_plans()`, and (optionally) add inspection actions via a `register(subparsers)` for `dump`/`list`. No central registry.
+### Adding a new browser
+
+Thanks to `_base/`, adding a new Chromium browser requires ~150-250 lines:
+
+1. Create `src/dotbrowser/<name>/__init__.py` -- define `_default_profile_root()`, `_build_plans()`, `_INIT_TEMPLATE`, wire `cmd_apply`/`cmd_init`/`register` to the `_base` orchestrator.
+2. Create `<name>/utils.py` -- one `BrowserProcess(...)` instance + backward-compat aliases.
+3. Create `<name>/settings.py` -- 3-line wrapper delegating to `_base.settings` with browser name.
+4. Create `<name>/pwa.py` -- `PwaConfig` with policy paths + thin wrappers for `POLICY_FILE`/`_sudo_write_policy` (for test monkeypatching).
+5. (Optional) Create `<name>/shortcuts.py` if the browser has a shortcut customization API.
+6. Add `from dotbrowser.<name> import register` in `cli.py::build_parser`.
+7. Add `examples/<name>/` configs and `tests/test_<name>_apply.py`.
 
 ### Brave shortcuts: how the patching actually works
 
@@ -103,9 +155,9 @@ This is the load-bearing knowledge for `brave/shortcuts.py`:
 
 7. **Platform-specific super/cmd modifier rewrite.** Brave serializes the super/cmd key as `Command+` on macOS and `Meta+` on Linux/Windows. Writing the wrong spelling is silently destructive — Brave's parser drops the unrecognized modifier on launch, so `Meta+KeyR` written on macOS reduces to bare `KeyR` (a single-letter binding that fires while typing). `_normalize_keys` rewrites either spelling to the current platform's form before `plan_apply` resolves IDs, so the same TOML config is portable. The diff and `verify_fn` both compare against the normalized values, so the displayed diff matches what Brave will actually parse. Only `Meta+` ↔ `Command+` are translated; other modifiers (`Control+`, `Shift+`, `Alt+`) pass through.
 
-### Brave settings: how MAC refusal works
+### Settings: how MAC refusal works
 
-This is the load-bearing knowledge for `brave/settings.py`:
+This is the load-bearing knowledge for `_base/settings.py` (shared by all browsers):
 
 1. **Why MAC refusal exists.** Many UI-relevant prefs in `Preferences` (e.g. `homepage`, `session.startup_urls`, `browser.show_home_button`, `default_search_provider_data.template_url_data`, `pinned_tabs`) are Chromium "tracked prefs": each has a sibling entry under `protection.macs.<dotted_path>` containing an HMAC-SHA256 over `(pref_path, serialized_value)`. At launch Brave recomputes the MAC and resets the value to default if it doesn't match. Writing the value without updating the MAC is silently destructive — the change vanishes on next launch.
 
@@ -119,9 +171,9 @@ This is the load-bearing knowledge for `brave/settings.py`:
 
 6. **`dump` semantics.** With no args, dump emits currently-managed keys. With explicit keys, it emits those — useful for "what's the current value?" discovery before adding a key to a config. Missing keys appear as commented-out lines so the user knows we looked but didn't find them.
 
-### Brave pwa: how force-install actually works
+### PWA: how force-install actually works
 
-This is the load-bearing knowledge for `brave/pwa.py`:
+This is the load-bearing knowledge for `_base/pwa.py` and the per-browser `pwa.py` wrappers:
 
 1. **Mechanism is Chromium's enterprise `WebAppInstallForceList` policy.** Listing a URL there causes Brave on next launch to fetch the manifest, download icons, register the app in `chrome://apps`, and emit a `.desktop` launcher (Linux) at `~/.local/share/applications/brave-<app_id>-Default.desktop`. Removing the URL + restarting causes Brave to uninstall the app, delete the icons directory, and remove the .desktop file. We don't reimplement any of this — Brave does it for us. Verified end-to-end against Brave 147 on Linux: `chrome://web-app-internals` confirms `latest_install_source: "external policy"`, and the `RemoveInstallSourceJob` fires automatically on policy removal with `result: kAppRemoved`.
 
@@ -148,5 +200,5 @@ The brave-core source contains the comment "PLEASE DO NOT CHANGE THE VALUE OF EX
 ## Constraints
 
 - **Python 3.11+** required (uses stdlib `tomllib`). Code has a `tomli` fallback path but `requires-python = ">=3.11"` in pyproject.toml — keep these in sync.
-- **Linux, macOS, and Windows** are supported in `DEFAULT_PROFILE_ROOT` (chosen via `sys.platform` in `brave/__init__.py::_default_profile_root`). Windows auto-detects `%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data`. For unsupported platforms (BSD, etc.), `--profile-root` is required at the CLI; the helper returns `None` so `--help` still works without crashing at import.
+- **Linux, macOS, and Windows** are supported. Each browser's `_default_profile_root()` auto-detects the profile path per platform. For unsupported platforms (BSD, etc.), `--profile-root` is required at the CLI; the helper returns `None` so `--help` still works without crashing at import.
 - **No runtime deps**. Stdlib only. Adding a dependency is a deliberate decision — prefer a stdlib solution first.
