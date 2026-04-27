@@ -347,3 +347,58 @@ def test_apply_empty_config_errors(
     r = _run_cli(fake_vivaldi_profile_root, "apply", str(cfg))
     assert r.returncode != 0
     assert "no [shortcuts], [settings] or [pwa]" in (r.stdout + r.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Vivaldi sync warning
+#
+# Mirrors the Brave Sync tests; the key lives at
+# `vivaldi.sync.has_setup_completed`, not at Chromium's
+# `sync.has_setup_completed`.
+# ---------------------------------------------------------------------------
+
+
+def _enable_vivaldi_sync(profile_root: Path) -> None:
+    prefs_path = profile_root / "Default" / "Preferences"
+    prefs = json.loads(prefs_path.read_text())
+    prefs.setdefault("vivaldi", {}).setdefault("sync", {})[
+        "has_setup_completed"
+    ] = True
+    prefs_path.write_text(json.dumps(prefs))
+
+
+def test_vivaldi_sync_warning_fires_when_enabled(
+    fake_vivaldi_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(vivaldi_pkg, "vivaldi_running", lambda: False)
+    _enable_vivaldi_sync(fake_vivaldi_profile_root)
+
+    cfg = tmp_path / "settings.toml"
+    cfg.write_text('[settings]\n"vivaldi.tabs.minimize" = true\n')
+
+    r = _run_cli(fake_vivaldi_profile_root, "apply", str(cfg), "--dry-run")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert "Vivaldi Sync is enabled" in out
+    assert "warning:" in out
+    assert out.index("warning:") < out.index("settings:")
+
+
+def test_vivaldi_no_warning_when_chromium_key_is_set(
+    fake_vivaldi_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Sanity: setting the Chromium-style `sync.has_setup_completed`
+    must NOT trigger the Vivaldi warning (Vivaldi doesn't use that
+    key)."""
+    monkeypatch.setattr(vivaldi_pkg, "vivaldi_running", lambda: False)
+    prefs_path = fake_vivaldi_profile_root / "Default" / "Preferences"
+    prefs = json.loads(prefs_path.read_text())
+    prefs.setdefault("sync", {})["has_setup_completed"] = True
+    prefs_path.write_text(json.dumps(prefs))
+
+    cfg = tmp_path / "settings.toml"
+    cfg.write_text('[settings]\n"vivaldi.tabs.minimize" = true\n')
+
+    r = _run_cli(fake_vivaldi_profile_root, "apply", str(cfg), "--dry-run")
+    assert r.returncode == 0
+    assert "Sync" not in r.stdout

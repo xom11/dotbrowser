@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dotbrowser"
-version = "0.3.1"
+dynamic = ["version"]
 description = "Manage browser settings as dotfiles. Currently supports Brave keyboard shortcuts and general settings (non-MAC keys); designed to expand."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,6 +33,9 @@ dotbrowser = "dotbrowser.cli:main"
 [project.urls]
 Homepage = "https://github.com/xom11/dotbrowser"
 Issues = "https://github.com/xom11/dotbrowser/issues"
+
+[tool.hatch.version]
+path = "src/dotbrowser/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dotbrowser"]
