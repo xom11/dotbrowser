@@ -6,16 +6,13 @@ items live in [issues](https://github.com/xom11/dotbrowser/issues).
 
 ## Atomicity & robustness
 
-- **Partial-failure recovery for `[pwa]` writes.** The orchestrator
-  commits `Preferences` via `write_atomic` before running
-  `external_apply_fn`. If the sudo write to the managed-policy file
-  fails (network mount, EACCES after creds cached), `Preferences` is
-  already mutated but state sidecars and the policy file are not.
-  Re-running converges, but the "single cycle" promise is broken.
-  Idea: snapshot the policy file before write and restore on failure,
-  or run the pwa external write *first* and abort the apply if it
-  fails — at the cost of leaving the user without prefs/shortcuts
-  changes when sudo flakes.
+- ~~**Partial-failure recovery for `[pwa]` writes.**~~ ✅ Done — the
+  orchestrator now runs `external_apply_fn` *before* `write_atomic`,
+  so a sudo / I/O failure leaves Preferences untouched. Trade-off
+  accepted: a flaky sudo means the whole apply (prefs + shortcuts)
+  rolls back, which is preferred over silent drift between prefs and
+  the policy file. Pinned by
+  `tests/test_unified_apply.py::test_external_failure_leaves_prefs_unchanged`.
 
 - **Concurrent-apply lock.** Two `apply` runs in parallel can race on
   `Preferences` and on the state sidecars. Add `fcntl.flock` (or a
