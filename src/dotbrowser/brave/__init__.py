@@ -21,6 +21,7 @@ from pathlib import Path
 
 from dotbrowser._base.orchestrator import (
     cmd_apply as _base_cmd_apply,
+    cmd_export as _base_cmd_export,
     cmd_init as _base_cmd_init,
     cmd_restore as _base_cmd_restore,
     register_browser,
@@ -258,6 +259,26 @@ def cmd_init(args: argparse.Namespace) -> None:
     _base_cmd_init(args, "brave", _INIT_TEMPLATE)
 
 
+def _export_shortcuts(args: argparse.Namespace, prefs_path: Path, prefs: dict) -> list[str]:
+    return shortcuts_mod.build_dump_block(
+        prefs, all_bindings=getattr(args, "all_shortcuts", False)
+    )
+
+
+def _export_pwa(args: argparse.Namespace, prefs_path: Path, prefs: dict) -> list[str] | None:
+    if pwa_mod.POLICY_FILE is None and sys.platform != "win32":
+        return None
+    return pwa_mod.build_dump_block()
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    _base_cmd_export(
+        args,
+        browser_name="brave",
+        builders=[_export_shortcuts, _export_pwa],
+    )
+
+
 def cmd_restore(args: argparse.Namespace) -> None:
     """Restore Preferences from an apply-time backup.
 
@@ -304,6 +325,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,
         cmd_restore_fn=cmd_restore,
+        cmd_export_fn=cmd_export,
+        export_has_shortcuts=True,
         module_registers=[
             shortcuts_mod.register,
             settings_mod.register,

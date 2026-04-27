@@ -28,6 +28,11 @@ dotbrowser brave settings dump
 dotbrowser brave settings blocked       # MAC-protected keys `apply` refuses
 dotbrowser brave pwa dump
 
+# Export everything user-customised into one round-trippable TOML
+dotbrowser brave export                  # stdout
+dotbrowser brave export -o brave.toml    # write to file
+dotbrowser brave export --all-shortcuts  # include defaults too (Brave/Vivaldi)
+
 # Same commands work for vivaldi, edge, and chrome
 dotbrowser vivaldi init
 dotbrowser vivaldi apply examples/vivaldi/all.toml
@@ -60,6 +65,7 @@ Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]
 - `test_pwa_apply.py` — `[pwa]`-only end-to-end. Runs on Linux, macOS, and Windows. Redirects `pwa.POLICY_FILE` into `tmp_path` (Linux/macOS) or monkeypatches registry read/write to a temp JSON file (Windows) and stubs the privilege preflight, so the suite never touches `/etc/`, `/Library/`, the registry, or prompts for credentials.
 - `test_edge_apply.py` — Edge settings apply, MAC refusal, dry-run, empty-config error, and `init` command. Same pattern as the Brave apply tests but for Edge (settings + pwa only, no shortcuts).
 - `test_chrome_apply.py` — Chrome settings apply, MAC refusal (covers both `Preferences.protection.macs` and `Secure Preferences.protection.macs`), dry-run, empty-config error, `init`, and the full pwa lifecycle. Mirrors `test_edge_apply.py`.
+- `test_export.py` — `<browser> export` for all four browsers. Redirects each browser's `pwa.POLICY_FILE` and `_read_existing_payload` to a tmp JSON file (same pattern as `test_pwa_apply.py`) so reads are deterministic without touching `/etc/`, `/Library/`, or the registry. Verifies (a) Brave's `[shortcuts]` is a diff against `brave.default_accelerators` and `--all-shortcuts` lifts that filter, (b) `[pwa]` reflects the seeded policy file, (c) Edge/Chrome omit `[shortcuts]` entirely, (d) Vivaldi emits every command with non-empty bindings (no defaults mirror to diff against), (e) the exported TOML is parseable and round-trips through `plan_apply` as a no-op.
 
 The `--kill-browser` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
@@ -69,7 +75,7 @@ The `--kill-browser` path is intentionally NOT covered by pytest (it would inter
 
 Supported browsers: **Brave** (shortcuts + settings + pwa), **Vivaldi** (shortcuts + settings + pwa), **Edge** (settings + pwa), **Chrome** (settings + pwa). Edge and Chrome do not support custom keyboard shortcuts via Preferences.
 
-`apply` is at the browser level -- one command writes `[shortcuts]`, `[settings]` and `[pwa]` from a single TOML file in a single backup + write cycle. `init` scaffolds a starter config. Per-module subcommands (`shortcuts`, `settings`, `pwa`) only host read-only inspection actions (`dump`, `list`).
+`apply` is at the browser level -- one command writes `[shortcuts]`, `[settings]` and `[pwa]` from a single TOML file in a single backup + write cycle. `init` scaffolds a starter config. `export` is the inverse of `apply`: emits a round-trippable TOML capturing the namespaces that have a notion of "user customisation" -- `[shortcuts]` (diff vs the browser's defaults) and `[pwa]` (force-installed list). `[settings]` is intentionally absent from `export`: Chromium has no defaults table for arbitrary prefs, so "diff vs default" isn't computable from the profile alone -- the export header documents this and points users at `settings dump`/`settings blocked`. Per-module subcommands (`shortcuts`, `settings`, `pwa`) only host read-only inspection actions (`dump`, `list`).
 
 ### Shared base (`_base/`)
 
@@ -90,7 +96,9 @@ _base/pwa.py          -> Full PWA logic (validation, diff, policy
                          PwaConfig with paths and keep module-level
                          POLICY_FILE / _sudo_write_policy for testability.
 _base/orchestrator.py -> cmd_apply (TOML loading, preflight, kill, backup,
-                         write, verify, restart), cmd_init, register_browser.
+                         write, verify, restart), cmd_init, cmd_export
+                         (browser-provided builders -> single TOML file),
+                         register_browser.
 ```
 
 ### Per-browser modules
@@ -132,17 +140,28 @@ Vivaldi follows the same pattern. Edge and Chrome are simpler (no shortcuts modu
 - **Missing table** (no `[settings]` header): module is skipped entirely. State file untouched. This is the safe default for users who only manage one namespace.
 - **Empty table** (`[settings]` followed by nothing): all previously-managed entries are reset (popped or reverted to default). State file becomes empty. This is the explicit "wipe my managed entries" gesture. The same rule applies to `[shortcuts]`.
 
+**`export` is intentionally narrower than `apply`.** `apply` accepts three namespaces; `export` only emits two. The omission of `[settings]` is a hard architectural constraint, not a TODO:
+
+- **Brave `[shortcuts]`** can be diffed exactly because `brave.default_accelerators` mirrors the compiled-in defaults inside the profile -- so we filter to bindings where `current[id] != defaults[id]`. `--all-shortcuts` lifts the filter for users who want a full snapshot.
+- **Vivaldi `[shortcuts]`** has no defaults mirror. The closest approximation is "commands with a non-empty `shortcuts` field", which still includes Vivaldi's compiled-in defaults. The export header explicitly notes this so users don't expect Brave-grade diffing.
+- **Edge/Chrome** have no `[shortcuts]` namespace at all (no `Preferences` accelerator API), so their `export` skips it.
+- **`[pwa]`** is naturally diff-shaped: the managed-policy file only contains URLs the user (or an MDM) put there. Note this only covers force-installed PWAs -- user-installed PWAs (clicking "Install" in the address bar) live in `Preferences` under `web_app_ids`/`web_apps` and are out of scope.
+- **`[settings]` is excluded** because Chromium's defaults are compiled C++ values, not exposed via `Preferences`. Snapshotting a fresh profile to diff against would be heavy and fragile; a hardcoded defaults table would be brittle and version-dependent. The export's top-of-file comment points users at `settings dump <key>...` and `settings blocked` instead.
+
+**Export contract: pure builders + a list dispatched in the orchestrator.** `cmd_export(args, *, browser_name, builders)` lives in `_base/orchestrator.py`. Each builder is a `(args, prefs_path, prefs) -> list[str] | None` callable; the orchestrator joins their output with the standard header. Each module exposes `build_dump_block(...)` (pure -- no I/O beyond reads, no stdout, no `args.output` handling) so both the per-namespace `cmd_dump` CLI and `cmd_export` reuse the same string-building logic. `cmd_export_fn` is wired into `register_browser` alongside `cmd_apply_fn`/`cmd_init_fn`/`cmd_restore_fn`; `export_has_shortcuts=True` adds the `--all-shortcuts` flag (Edge/Chrome leave it `False`).
+
 ### Adding a new browser
 
 Thanks to `_base/`, adding a new Chromium browser requires ~150-250 lines:
 
-1. Create `src/dotbrowser/<name>/__init__.py` -- define `_default_profile_root()`, `_build_plans()`, `_INIT_TEMPLATE`, wire `cmd_apply`/`cmd_init`/`register` to the `_base` orchestrator. (If the browser has multiple release channels like Brave, also pass `setup_profile_args` and `normalize_args` to `register_browser` -- see Brave's `_setup_brave_profile_args` and `_normalize_brave_args` for the pattern.)
+1. Create `src/dotbrowser/<name>/__init__.py` -- define `_default_profile_root()`, `_build_plans()`, `_INIT_TEMPLATE`, wire `cmd_apply`/`cmd_init`/`cmd_export`/`register` to the `_base` orchestrator. (If the browser has multiple release channels like Brave, also pass `setup_profile_args` and `normalize_args` to `register_browser` -- see Brave's `_setup_brave_profile_args` and `_normalize_brave_args` for the pattern.)
 2. Create `<name>/utils.py` -- one `BrowserProcess(...)` instance + backward-compat aliases.
 3. Create `<name>/settings.py` -- 3-line wrapper delegating to `_base.settings` with browser name.
-4. Create `<name>/pwa.py` -- `PwaConfig` with policy paths + thin wrappers for `POLICY_FILE`/`_sudo_write_policy` (for test monkeypatching).
-5. (Optional) Create `<name>/shortcuts.py` if the browser has a shortcut customization API.
-6. Add `from dotbrowser.<name> import register` in `cli.py::build_parser`.
-7. Add `examples/<name>/` configs and `tests/test_<name>_apply.py`.
+4. Create `<name>/pwa.py` -- `PwaConfig` with policy paths + thin wrappers for `POLICY_FILE`/`_sudo_write_policy` (for test monkeypatching) + `build_dump_block()` (so `cmd_export` can collect the `[pwa]` block without re-implementing it).
+5. (Optional) Create `<name>/shortcuts.py` if the browser has a shortcut customization API. If you do, expose `build_dump_block(prefs, *, all_bindings, header_comment)` so the export wiring stays a one-liner.
+6. Wire `cmd_export` in `<name>/__init__.py` with per-namespace builders (`_export_shortcuts`, `_export_pwa`); pass `cmd_export_fn=cmd_export` and `export_has_shortcuts=True/False` to `register_browser`.
+7. Add `from dotbrowser.<name> import register` in `cli.py::build_parser`.
+8. Add `examples/<name>/` configs and `tests/test_<name>_apply.py`. Cover `export` in `tests/test_export.py` (parametrised by browser).
 
 ### Brave shortcuts: how the patching actually works
 

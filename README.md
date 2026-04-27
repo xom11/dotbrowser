@@ -108,7 +108,7 @@ dotbrowser chrome  apply chrome.toml -k          # Chrome: settings + pwa only
 
 ## CLI reference
 
-Shape: `dotbrowser <browser> [browser-flags] <action> [action-flags] [args]`. The same actions work for `brave`, `vivaldi`, `edge`, and `chrome` (Edge and Chrome omit the `shortcuts` action).
+Shape: `dotbrowser <browser> [browser-flags] <action> [action-flags] [args]`. The same actions work for `brave`, `vivaldi`, `edge`, and `chrome` (Edge and Chrome omit the `shortcuts` action). `export` is the inverse of `apply`: produce a round-trippable TOML from the current profile state.
 
 ### Browser-level flags
 
@@ -236,6 +236,28 @@ dotbrowser brave   pwa dump
 dotbrowser vivaldi pwa dump
 dotbrowser edge    pwa dump
 dotbrowser chrome  pwa dump
+```
+
+### `export` — capture every user-customised namespace into one round-trippable TOML
+
+Bootstrap your dotfile from a profile you've already tweaked by hand: `export` reads the live profile + managed-policy file and emits `[shortcuts]` (Brave/Vivaldi only) plus `[pwa]` in a single TOML document. Pipe it back into `apply` to migrate to another machine.
+
+- **Brave** `[shortcuts]` lists only bindings that differ from the browser's compiled-in defaults (`brave.default_accelerators`). Pass `--all-shortcuts` to lift the diff filter and emit every binding.
+- **Vivaldi** has no defaults mirror, so its `[shortcuts]` lists every command with a non-empty binding (still includes Vivaldi's compiled-in defaults). The export header documents this limitation inline.
+- **Edge / Chrome** skip `[shortcuts]` entirely (neither browser has the namespace).
+- `[pwa]` always reflects the current managed-policy source for that browser.
+- `[settings]` is **intentionally absent**: Chromium does not expose a defaults table for arbitrary prefs, so `diff vs default` is not computable. Use `settings dump <key>...` for specific keys you already know about, or `settings blocked` to learn which MAC-protected keys `apply` would refuse.
+
+| Flag | What it does |
+|---|---|
+| `-o, --output FILE` | Write to FILE instead of stdout. |
+| `-a, --all-shortcuts` | (Brave/Vivaldi) include every shortcut binding, not just user-customised ones. |
+
+```bash
+dotbrowser brave   export -o brave.toml         # full snapshot (no settings)
+dotbrowser vivaldi export                       # to stdout
+dotbrowser edge    export -o edge.toml          # [pwa] only
+dotbrowser chrome  export -o chrome.toml        # [pwa] only
 ```
 
 ## How it works

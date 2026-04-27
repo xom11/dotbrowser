@@ -71,6 +71,13 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     )
 
 
+def build_dump_block(*, header_comment: str | None = None) -> list[str]:
+    return _base.build_dump_block(
+        POLICY_FILE, _WINDOWS_POLICY_KEY, _read_current_policy,
+        header_comment=header_comment,
+    )
+
+
 def cmd_dump(args: argparse.Namespace) -> None:
     _base.cmd_dump(
         "vivaldi", POLICY_FILE, _WINDOWS_POLICY_KEY,

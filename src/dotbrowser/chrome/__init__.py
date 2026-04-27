@@ -16,6 +16,7 @@ from pathlib import Path
 
 from dotbrowser._base.orchestrator import (
     cmd_apply as _base_cmd_apply,
+    cmd_export as _base_cmd_export,
     cmd_init as _base_cmd_init,
     cmd_restore as _base_cmd_restore,
     register_browser,
@@ -113,6 +114,16 @@ def cmd_init(args: argparse.Namespace) -> None:
     _base_cmd_init(args, "chrome", _INIT_TEMPLATE)
 
 
+def _export_pwa(args: argparse.Namespace, prefs_path: Path, prefs: dict) -> list[str] | None:
+    if pwa_mod.POLICY_FILE is None and sys.platform != "win32":
+        return None
+    return pwa_mod.build_dump_block()
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    _base_cmd_export(args, browser_name="chrome", builders=[_export_pwa])
+
+
 def cmd_restore(args: argparse.Namespace) -> None:
     _base_cmd_restore(
         args,
@@ -134,6 +145,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,
         cmd_restore_fn=cmd_restore,
+        cmd_export_fn=cmd_export,
         module_registers=[
             settings_mod.register,
             pwa_mod.register,
