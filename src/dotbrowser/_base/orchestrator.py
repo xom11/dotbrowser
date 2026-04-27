@@ -207,17 +207,38 @@ def register_browser(
     cmd_apply_fn,
     cmd_init_fn=None,
     module_registers: list,
+    setup_profile_args: Callable[[argparse.ArgumentParser], None] | None = None,
+    normalize_args: Callable[[argparse.Namespace], None] | None = None,
 ) -> None:
-    """Register a browser's full CLI subtree."""
+    """Register a browser's full CLI subtree.
+
+    ``setup_profile_args``, if provided, fully replaces the default
+    ``--profile-root`` / ``--profile`` setup so a browser can add
+    related flags (e.g. ``--channel`` for Brave's release channels) and
+    defer profile-root resolution to runtime.
+    """
     p = subparsers.add_parser(name, help=help_text)
 
-    if default_profile_root is not None:
+    if normalize_args is not None:
+        # Propagates onto every subcommand's namespace so cli.main()
+        # can run it before dispatch.
+        p.set_defaults(_normalize_args=normalize_args)
+
+    if setup_profile_args is not None:
+        setup_profile_args(p)
+    elif default_profile_root is not None:
         p.add_argument(
             "-r",
             "--profile-root",
             type=Path,
             default=default_profile_root,
             help=f"default: {default_profile_root}",
+        )
+        p.add_argument(
+            "-p",
+            "--profile",
+            default="Default",
+            help="profile dir name (default: Default)",
         )
     else:
         p.add_argument(
@@ -227,12 +248,12 @@ def register_browser(
             required=True,
             help=f"required (no default for platform {sys.platform!r})",
         )
-    p.add_argument(
-        "-p",
-        "--profile",
-        default="Default",
-        help="profile dir name (default: Default)",
-    )
+        p.add_argument(
+            "-p",
+            "--profile",
+            default="Default",
+            help="profile dir name (default: Default)",
+        )
     sub = p.add_subparsers(dest="module", required=True, metavar="ACTION")
 
     if cmd_init_fn is not None:

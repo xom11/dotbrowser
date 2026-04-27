@@ -35,4 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    normalize = getattr(args, "_normalize_args", None)
+    if normalize is not None:
+        normalize(args)
     args.func(args)

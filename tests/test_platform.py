@@ -126,6 +126,127 @@ def test_default_profile_root_linux_picks_flatpak_when_only_flatpak_has_data(
     assert brave_pkg._default_profile_root() == flatpak_root
 
 
+# ---------------------------------------------------------------------------
+# Channel-aware path resolution (Beta / Nightly)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "channel,suffix",
+    [("stable", ""), ("beta", "-Beta"), ("nightly", "-Nightly")],
+)
+def test_default_profile_root_macos_per_channel(
+    monkeypatch, tmp_path, channel, suffix
+) -> None:
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+
+    root = brave_pkg._default_profile_root(channel)
+    assert root == (
+        tmp_path / "Library" / "Application Support" / "BraveSoftware"
+        / f"Brave-Browser{suffix}"
+    )
+
+
+@pytest.mark.parametrize(
+    "channel,suffix",
+    [("stable", ""), ("beta", "-Beta"), ("nightly", "-Nightly")],
+)
+def test_default_profile_root_linux_per_channel(
+    monkeypatch, tmp_path, channel, suffix
+) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+
+    root = brave_pkg._default_profile_root(channel)
+    assert root == (
+        tmp_path / ".config" / "BraveSoftware" / f"Brave-Browser{suffix}"
+    )
+
+
+def test_linux_beta_skips_snap_flatpak_probe(monkeypatch, tmp_path) -> None:
+    """Snap/Flatpak only ship stable -- beta must return the direct path
+    even when a stable snap profile happens to exist."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    snap_root = (
+        tmp_path / "snap" / "brave" / "current" / ".config"
+        / "BraveSoftware" / "Brave-Browser"
+    )
+    _make_brave_profile(snap_root)  # stable snap exists
+
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+    beta = brave_pkg._default_profile_root("beta")
+    assert beta == tmp_path / ".config" / "BraveSoftware" / "Brave-Browser-Beta"
+
+
+@pytest.mark.parametrize(
+    "channel,suffix",
+    [("stable", ""), ("beta", "-Beta"), ("nightly", "-Nightly")],
+)
+def test_default_profile_root_windows_per_channel(
+    monkeypatch, tmp_path, channel, suffix
+) -> None:
+    monkeypatch.setattr("sys.platform", "win32")
+    fake_local = tmp_path / "AppData" / "Local"
+    monkeypatch.setenv("LOCALAPPDATA", str(fake_local))
+    import dotbrowser.brave as brave_pkg
+    importlib.reload(brave_pkg)
+
+    root = brave_pkg._default_profile_root(channel)
+    assert root == fake_local / "BraveSoftware" / f"Brave-Browser{suffix}" / "User Data"
+
+
+def test_default_profile_root_rejects_unknown_channel() -> None:
+    import dotbrowser.brave as brave_pkg
+    with pytest.raises(ValueError, match="unknown channel"):
+        brave_pkg._default_profile_root("dev")
+
+
+def test_make_browser_process_channel_distinct_macos_app_names() -> None:
+    """macOS proc name + app name change per channel so kill/restart
+    target the right Brave install."""
+    from dotbrowser.brave.utils import _make_browser_process
+    assert _make_browser_process("stable").macos_app_name == "Brave Browser"
+    assert _make_browser_process("beta").macos_app_name == "Brave Browser Beta"
+    assert _make_browser_process("nightly").macos_app_name == "Brave Browser Nightly"
+    # Display names too
+    assert _make_browser_process("beta").display_name == "Brave Beta"
+
+
+def test_make_browser_process_windows_path_per_channel() -> None:
+    from dotbrowser.brave.utils import _make_browser_process
+    assert _make_browser_process("stable").windows_exe_relpath == (
+        "BraveSoftware", "Brave-Browser", "Application", "brave.exe",
+    )
+    assert _make_browser_process("nightly").windows_exe_relpath == (
+        "BraveSoftware", "Brave-Browser-Nightly", "Application", "brave.exe",
+    )
+
+
+def test_make_browser_process_linux_wrappers_per_channel() -> None:
+    from dotbrowser.brave.utils import _make_browser_process
+    assert _make_browser_process("stable").linux_wrappers == [
+        "brave-browser", "brave",
+    ]
+    assert _make_browser_process("beta").linux_wrappers == [
+        "brave-browser-beta", "brave-beta",
+    ]
+
+
+def test_make_browser_process_no_flatpak_for_non_stable() -> None:
+    """Brave doesn't ship Beta/Nightly via Flatpak; restart should not
+    try `flatpak run` for those channels."""
+    from dotbrowser.brave.utils import _make_browser_process
+    assert _make_browser_process("stable").flatpak_app_id == "com.brave.Browser"
+    assert _make_browser_process("beta").flatpak_app_id is None
+    assert _make_browser_process("nightly").flatpak_app_id is None
+
+
 def test_restart_uses_flatpak_run_for_flatpak_brave(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "linux")
     from dotbrowser._base import process as bp

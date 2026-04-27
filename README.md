@@ -116,6 +116,7 @@ These apply to **every** action under a browser and go *before* the action name.
 |---|---|---|
 | `-r, --profile-root PATH` | see table below | Browser's root profile directory. Auto-detected on Linux / macOS / Windows. |
 | `-p, --profile NAME` | `Default` | Profile directory name inside the root — e.g. `"Profile 1"`, `Default`. |
+| `--channel {stable,beta,nightly}` | `stable` | **Brave only.** Selects the release channel; auto-detects the corresponding `Brave-Browser-Beta` / `Brave-Browser-Nightly` profile path. |
 
 | Browser | Linux | macOS | Windows |
 |---|---|---|---|
@@ -123,9 +124,14 @@ These apply to **every** action under a browser and go *before* the action name.
 | `vivaldi` | `~/.config/vivaldi` | `~/Library/Application Support/Vivaldi` | `%LOCALAPPDATA%\Vivaldi\User Data` |
 | `edge`    | `~/.config/microsoft-edge` | `~/Library/Application Support/Microsoft Edge` | `%LOCALAPPDATA%\Microsoft\Edge\User Data` |
 
+For Brave Beta / Nightly the same paths apply with a `-Beta` / `-Nightly` suffix on the `Brave-Browser` directory (Snap and Flatpak only ship stable, so non-stable channels skip those probes).
+
 ```bash
 # Apply on a non-default profile, with an alternate root.
 dotbrowser brave -r /custom/path -p "Profile 1" apply brave.toml
+
+# Apply against Brave Beta (auto-detects ~/.config/BraveSoftware/Brave-Browser-Beta).
+dotbrowser brave --channel beta apply brave.toml
 ```
 
 ### `init` — scaffold a starter TOML

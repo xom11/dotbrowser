@@ -96,8 +96,13 @@ Each browser is a thin wrapper that configures `_base/`:
 
 ```
 cli.py              -> mounts brave, vivaldi, edge via register()
-brave/__init__      -> _default_profile_root, _build_plans, _INIT_TEMPLATE,
-                       cmd_apply (passes callbacks to _base orchestrator),
+brave/__init__      -> _default_profile_root(channel), _build_plans,
+                       _INIT_TEMPLATE, _setup_brave_profile_args (adds
+                       --channel + defers --profile-root default),
+                       _normalize_brave_args (resolves profile_root from
+                       channel post-parse), cmd_apply (passes callbacks
+                       to _base orchestrator -- module-level for stable,
+                       channel-specific BrowserProcess for beta/nightly),
                        cmd_init, register.
 brave/shortcuts     -> Brave-specific (numeric command IDs, Meta+/Command+
                        rewrite). Not shared -- each browser's shortcut
@@ -118,6 +123,8 @@ Vivaldi follows the same pattern. Edge is simpler (no shortcuts module).
 
 **Process callbacks are resolved at call time** in each browser's `cmd_apply` wrapper (not captured at import time), so test monkeypatching of `brave_pkg.brave_running` etc. takes effect. This is why each browser re-exports its process functions in `__init__.py` and passes them to the shared orchestrator.
 
+**Brave release channels (stable / beta / nightly).** `--channel` selects which Brave install to target. The default for `--profile-root` is deferred to runtime via `register_browser`'s `setup_profile_args` + `normalize_args` hooks (see `_normalize_brave_args` in `brave/__init__.py`); `cli.main()` runs the normalizer before dispatching `args.func`. Profile path: `Brave-Browser` → `Brave-Browser-Beta` / `Brave-Browser-Nightly` on every OS. Process management: macOS proc/app names are channel-distinct (`Brave Browser Beta`), Windows install dirs differ (`Brave-Browser-Beta\Application\brave.exe`), but **on Linux all channels share `proc_name = "brave"`** because each channel installs to `/opt/brave.com/brave{,-beta,-nightly}/` with the same inner binary basename — so `pgrep -x brave` cannot distinguish channels. If a Linux user runs stable + beta simultaneously, `running()` returns True regardless of which channel they targeted; this is documented as a known limitation. Snap/Flatpak only ship stable, so `_default_profile_root` skips those probes for non-stable channels and `_make_browser_process` zeros out `flatpak_app_id` so `restart()` doesn't try `flatpak run` for a beta/nightly install. For stable, `cmd_apply` keeps using the module-level `brave_running` etc. so test monkeypatching still works; for non-stable it builds a fresh `BrowserProcess` and uses its methods directly.
+
 **TOML table semantics for unified apply:**
 - **Missing table** (no `[settings]` header): module is skipped entirely. State file untouched. This is the safe default for users who only manage one namespace.
 - **Empty table** (`[settings]` followed by nothing): all previously-managed entries are reset (popped or reverted to default). State file becomes empty. This is the explicit "wipe my managed entries" gesture. The same rule applies to `[shortcuts]`.
@@ -126,7 +133,7 @@ Vivaldi follows the same pattern. Edge is simpler (no shortcuts module).
 
 Thanks to `_base/`, adding a new Chromium browser requires ~150-250 lines:
 
-1. Create `src/dotbrowser/<name>/__init__.py` -- define `_default_profile_root()`, `_build_plans()`, `_INIT_TEMPLATE`, wire `cmd_apply`/`cmd_init`/`register` to the `_base` orchestrator.
+1. Create `src/dotbrowser/<name>/__init__.py` -- define `_default_profile_root()`, `_build_plans()`, `_INIT_TEMPLATE`, wire `cmd_apply`/`cmd_init`/`register` to the `_base` orchestrator. (If the browser has multiple release channels like Brave, also pass `setup_profile_args` and `normalize_args` to `register_browser` -- see Brave's `_setup_brave_profile_args` and `_normalize_brave_args` for the pattern.)
 2. Create `<name>/utils.py` -- one `BrowserProcess(...)` instance + backward-compat aliases.
 3. Create `<name>/settings.py` -- 3-line wrapper delegating to `_base.settings` with browser name.
 4. Create `<name>/pwa.py` -- `PwaConfig` with policy paths + thin wrappers for `POLICY_FILE`/`_sudo_write_policy` (for test monkeypatching).

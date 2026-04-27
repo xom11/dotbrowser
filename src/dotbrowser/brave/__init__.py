@@ -38,27 +38,49 @@ from dotbrowser.brave.utils import (  # noqa: F401
 )
 
 
-def _default_profile_root() -> Path | None:
-    """Brave's profile root, per platform.
+CHANNELS = ("stable", "beta", "nightly")
+
+# Path-suffix Brave appends to the Brave-Browser directory name for
+# beta/nightly channels.  Same on every OS.
+_CHANNEL_DIR_SUFFIX = {"stable": "", "beta": "-Beta", "nightly": "-Nightly"}
+
+
+def _default_profile_root(channel: str = "stable") -> Path | None:
+    """Brave's profile root, per platform and channel.
 
     Returns None for unsupported platforms; the CLI then requires
     --profile-root to be passed explicitly so that --help still works
     on BSD / etc. without crashing at import time.
+
+    Snap and Flatpak only ship a stable channel (verified against
+    Brave's official packaging), so non-stable channels probe only
+    the direct-install path.
     """
+    if channel not in CHANNELS:
+        raise ValueError(f"unknown channel: {channel!r}")
+    suffix = _CHANNEL_DIR_SUFFIX[channel]
     home = Path.home()
     if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "BraveSoftware" / "Brave-Browser"
+        return (
+            home / "Library" / "Application Support" / "BraveSoftware"
+            / f"Brave-Browser{suffix}"
+        )
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
-            candidate = Path(local_app_data) / "BraveSoftware" / "Brave-Browser" / "User Data"
-            if (candidate / "Local State").exists():
-                return candidate
+            candidate = (
+                Path(local_app_data) / "BraveSoftware"
+                / f"Brave-Browser{suffix}" / "User Data"
+            )
             return candidate
         return None
     if sys.platform.startswith("linux"):
+        direct = home / ".config" / "BraveSoftware" / f"Brave-Browser{suffix}"
+        if channel != "stable":
+            # Snap/Flatpak only ship stable.
+            return direct
         candidates = (
-            home / ".config" / "BraveSoftware" / "Brave-Browser",
+            direct,
             home / "snap" / "brave" / "current" / ".config" / "BraveSoftware" / "Brave-Browser",
             home / ".var" / "app" / "com.brave.Browser" / "config" / "BraveSoftware" / "Brave-Browser",
         )
@@ -146,18 +168,87 @@ _INIT_TEMPLATE = """\
 
 
 # ---------------------------------------------------------------------------
+# Channel-aware argument resolution
+# ---------------------------------------------------------------------------
+
+def _setup_brave_profile_args(parser: argparse.ArgumentParser) -> None:
+    """Brave-specific profile flags.
+
+    ``--channel`` selects between stable, beta, and nightly. The
+    default for ``--profile-root`` is deferred to runtime
+    (``_normalize_brave_args``) because it depends on which channel
+    the user picked.
+    """
+    parser.add_argument(
+        "--channel",
+        choices=CHANNELS,
+        default="stable",
+        help="Brave release channel (default: stable)",
+    )
+    parser.add_argument(
+        "-r",
+        "--profile-root",
+        type=Path,
+        default=None,
+        help="default: auto-detect from --channel",
+    )
+    parser.add_argument(
+        "-p",
+        "--profile",
+        default="Default",
+        help="profile dir name (default: Default)",
+    )
+
+
+def _normalize_brave_args(args: argparse.Namespace) -> None:
+    """Fill in ``args.profile_root`` from ``args.channel`` when omitted."""
+    if getattr(args, "profile_root", None) is None:
+        root = _default_profile_root(args.channel)
+        if root is None:
+            sys.exit(
+                f"error: no default Brave profile root for platform "
+                f"{sys.platform!r} (channel={args.channel!r}); "
+                f"pass --profile-root explicitly"
+            )
+        args.profile_root = root
+
+
+# ---------------------------------------------------------------------------
 # CLI handlers
 # ---------------------------------------------------------------------------
 
 def cmd_apply(args: argparse.Namespace) -> None:
+    """Unified apply for Brave.
+
+    For ``--channel stable`` we keep the module-level callbacks so
+    tests can monkeypatch ``brave_pkg.brave_running`` etc.  For
+    beta/nightly we use a freshly built BrowserProcess (those channels
+    have no test coverage today).
+    """
+    channel = getattr(args, "channel", "stable")
+    if channel == "stable":
+        _base_cmd_apply(
+            args,
+            display_name="Brave",
+            running_fn=brave_running,
+            pids_fn=_brave_pids,
+            find_cmdline_fn=find_main_brave_cmdline,
+            kill_fn=kill_brave_and_wait,
+            restart_fn=restart_brave,
+            build_plans_fn=_build_plans,
+        )
+        return
+
+    from dotbrowser.brave.utils import _make_browser_process
+    proc = _make_browser_process(channel)
     _base_cmd_apply(
         args,
-        display_name="Brave",
-        running_fn=brave_running,
-        pids_fn=_brave_pids,
-        find_cmdline_fn=find_main_brave_cmdline,
-        kill_fn=kill_brave_and_wait,
-        restart_fn=restart_brave,
+        display_name=proc.display_name,
+        running_fn=proc.running,
+        pids_fn=proc.pids,
+        find_cmdline_fn=proc.find_main_cmdline,
+        kill_fn=proc.kill_and_wait,
+        restart_fn=proc.restart,
         build_plans_fn=_build_plans,
     )
 
@@ -183,4 +274,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             settings_mod.register,
             pwa_mod.register,
         ],
+        setup_profile_args=_setup_brave_profile_args,
+        normalize_args=_normalize_brave_args,
     )

@@ -20,19 +20,47 @@ from dotbrowser._base.process import BrowserProcess
 # Brave-specific process configuration
 # ---------------------------------------------------------------------------
 
-BROWSER_PROCESS = BrowserProcess(
-    display_name="Brave",
-    proc_name_linux="brave",
-    proc_name_macos="Brave Browser",
-    proc_name_windows="brave.exe",
-    macos_app_name="Brave Browser",
-    linux_wrappers=["brave-browser", "brave"],
-    windows_exe_relpath=(
-        "BraveSoftware", "Brave-Browser", "Application", "brave.exe",
-    ),
-    flatpak_prefix="/app/brave/",
-    flatpak_app_id="com.brave.Browser",
-)
+_CHANNEL_PRETTY = {"stable": "", "beta": " Beta", "nightly": " Nightly"}
+_CHANNEL_DIR = {"stable": "", "beta": "-Beta", "nightly": "-Nightly"}
+_CHANNEL_LOWER = {"stable": "", "beta": "-beta", "nightly": "-nightly"}
+
+
+def _make_browser_process(channel: str = "stable") -> BrowserProcess:
+    """BrowserProcess configured for a Brave release channel.
+
+    Linux note: all channels share the inner binary basename ``brave``
+    (each channel installs to ``/opt/brave.com/brave{,-beta,-nightly}/``
+    but the executable inside is always ``brave``).  This means
+    ``pgrep -x brave`` on Linux can't distinguish channels -- if the
+    user has stable + beta running simultaneously, ``running()``
+    returns True regardless of which channel they targeted.  macOS and
+    Windows have channel-distinct names (``Brave Browser Beta`` and
+    ``Brave-Browser-Beta\\Application\\brave.exe`` respectively).
+    """
+    pretty = _CHANNEL_PRETTY[channel]
+    dir_suf = _CHANNEL_DIR[channel]
+    lower = _CHANNEL_LOWER[channel]
+    is_stable = channel == "stable"
+    return BrowserProcess(
+        display_name=f"Brave{pretty}",
+        proc_name_linux="brave",
+        proc_name_macos=f"Brave Browser{pretty}",
+        proc_name_windows="brave.exe",
+        macos_app_name=f"Brave Browser{pretty}",
+        linux_wrappers=(
+            ["brave-browser", "brave"]
+            if is_stable
+            else [f"brave-browser{lower}", f"brave{lower}"]
+        ),
+        windows_exe_relpath=(
+            "BraveSoftware", f"Brave-Browser{dir_suf}", "Application", "brave.exe",
+        ),
+        flatpak_prefix="/app/brave/" if is_stable else None,
+        flatpak_app_id="com.brave.Browser" if is_stable else None,
+    )
+
+
+BROWSER_PROCESS = _make_browser_process("stable")
 
 
 # ---------------------------------------------------------------------------
