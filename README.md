@@ -6,11 +6,11 @@
 
 Manage your browser as a dotfile. Keep shortcuts and UI tweaks in a single TOML, apply with one command, sync across machines — no browser cloud sync required.
 
-> **Status: alpha.** Brave + Vivaldi + Edge on Linux, macOS, and Windows — keyboard shortcuts (Brave / Vivaldi), general settings (vertical tabs, sidebar, NTP & toolbar declutter, …), and force-installed PWAs. Edge supports `[settings]` and `[pwa]` only — Microsoft Edge does not expose customizable accelerators in `Preferences`. A shared `_base/` module makes adding more Chromium-based browsers a ~150-line job.
+> **Status: alpha.** Brave + Vivaldi + Edge + Chrome on Linux, macOS, and Windows — keyboard shortcuts (Brave / Vivaldi), general settings (vertical tabs, sidebar, NTP & toolbar declutter, …), and force-installed PWAs. Edge and Chrome support `[settings]` and `[pwa]` only — neither exposes customizable accelerators in `Preferences`. MAC integrity is checked across both `Preferences` and `Secure Preferences` so Chrome's split tracked-pref storage is honored. A shared `_base/` module makes adding more Chromium-based browsers a ~150-line job.
 
 ## Quick start
 
-The repo ships opinionated examples under [`examples/brave/`](examples/brave/), [`examples/vivaldi/`](examples/vivaldi/), and [`examples/edge/`](examples/edge/): vertical tabs collapsed to icons, decluttered new tab page, stripped-down toolbar, vim-style hjkl shortcuts. Each `all.toml` bundles all available namespaces; `shortcuts.toml`, `settings.toml`, and `pwa.toml` are single-namespace variants.
+The repo ships opinionated examples under [`examples/brave/`](examples/brave/), [`examples/vivaldi/`](examples/vivaldi/), [`examples/edge/`](examples/edge/), and [`examples/chrome/`](examples/chrome/): vertical tabs collapsed to icons, decluttered new tab page, stripped-down toolbar, vim-style hjkl shortcuts. Each `all.toml` bundles all available namespaces; `shortcuts.toml`, `settings.toml`, and `pwa.toml` are single-namespace variants.
 
 ![Brave with the minimal config — empty new tab page, vertical tabs collapsed to icons, decluttered toolbar](docs/img/minimal-brave.png)
 
@@ -21,6 +21,7 @@ dotbrowser brave init                        # write commented template to stdou
 dotbrowser brave init -o brave.toml          # ...or to a file
 dotbrowser vivaldi init -o vivaldi.toml
 dotbrowser edge init -o edge.toml
+dotbrowser chrome init -o chrome.toml
 ```
 
 **Or apply an example directly from GitHub** — no clone, no install. Fetched payloads are echoed with byte size + SHA-256 so you can see exactly what's being applied:
@@ -42,7 +43,7 @@ curl -fsSL -o brave.toml https://raw.githubusercontent.com/xom11/dotbrowser/main
 uvx dotbrowser brave apply brave.toml -k
 ```
 
-The Vivaldi (`vivaldi/all.toml`) and Edge (`edge/all.toml`) variants follow the same shape. Anything you later remove from your config reverts to the browser's default on the next `apply` — no orphan entries.
+The Vivaldi (`vivaldi/all.toml`), Edge (`edge/all.toml`), and Chrome (`chrome/all.toml`) variants follow the same shape. Anything you later remove from your config reverts to the browser's default on the next `apply` — no orphan entries.
 
 ## Install
 
@@ -95,18 +96,19 @@ dotbrowser brave   apply brave.toml --dry-run    # preview the diff
 dotbrowser brave   apply brave.toml -k           # apply, force-kill + restart Brave
 dotbrowser vivaldi apply vivaldi.toml -k         # same flags, different browser
 dotbrowser edge    apply edge.toml -k            # Edge: settings + pwa only
+dotbrowser chrome  apply chrome.toml -k          # Chrome: settings + pwa only
 ```
 
 - **Shortcut keys (Brave)**: Chromium [KeyEvent codes](https://www.w3.org/TR/uievents-code/) joined by `+` — `Control+Shift+KeyP`, `Alt+Digit1`, `F11`. `Meta+` is auto-translated to `Command+` on macOS.
 - **Shortcut keys (Vivaldi)**: lowercase, tokenized with `+` — `meta+t`, `ctrl+shift+e`. Vivaldi uses the same `meta+` spelling on every platform (cmd on macOS, win/super on Linux/Windows), so no platform translation is needed.
-- **Edge has no `[shortcuts]`**: Microsoft Edge hardcodes accelerators and exposes no `Preferences` key for them. Use `[settings]` and `[pwa]` instead.
+- **Edge / Chrome have no `[shortcuts]`**: neither browser exposes a `Preferences` key for accelerators. Use `[settings]` and `[pwa]` instead.
 - **Setting keys**: dotted paths into the profile `Preferences` JSON. MAC-protected keys (`homepage`, default search engine, `pinned_tabs`, …) are refused with a clear error.
 - **PWA URLs**: every entry installs with `default_launch_container = "window"` (standalone PWA window) and `create_desktop_shortcut = true`. `[pwa]` is the only namespace that needs elevated privileges: it writes a managed-policy file (sudo on Linux/macOS) or the Windows Registry (administrator). If your config has no `[pwa]` table or no diff to apply, no elevation prompt happens.
 - **Empty `[settings]` header** (no entries) wipes everything dotbrowser previously managed in that namespace. **Missing header** = skip the namespace entirely. Same rule applies to `[shortcuts]` and `[pwa]`.
 
 ## CLI reference
 
-Shape: `dotbrowser <browser> [browser-flags] <action> [action-flags] [args]`. The same actions work for `brave`, `vivaldi`, and `edge` (Edge omits the `shortcuts` action).
+Shape: `dotbrowser <browser> [browser-flags] <action> [action-flags] [args]`. The same actions work for `brave`, `vivaldi`, `edge`, and `chrome` (Edge and Chrome omit the `shortcuts` action).
 
 ### Browser-level flags
 
@@ -123,6 +125,7 @@ These apply to **every** action under a browser and go *before* the action name.
 | `brave`   | `~/.config/BraveSoftware/Brave-Browser` | `~/Library/Application Support/BraveSoftware/Brave-Browser` | `%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data` |
 | `vivaldi` | `~/.config/vivaldi` | `~/Library/Application Support/Vivaldi` | `%LOCALAPPDATA%\Vivaldi\User Data` |
 | `edge`    | `~/.config/microsoft-edge` | `~/Library/Application Support/Microsoft Edge` | `%LOCALAPPDATA%\Microsoft\Edge\User Data` |
+| `chrome`  | `~/.config/google-chrome` | `~/Library/Application Support/Google/Chrome` | `%LOCALAPPDATA%\Google\Chrome\User Data` |
 
 For Brave Beta / Nightly the same paths apply with a `-Beta` / `-Nightly` suffix on the `Brave-Browser` directory (Snap and Flatpak only ship stable, so non-stable channels skip those probes).
 
@@ -146,6 +149,7 @@ Writes a commented template with example shortcuts (Brave / Vivaldi only), setti
 dotbrowser brave   init -o brave.toml
 dotbrowser vivaldi init -o vivaldi.toml
 dotbrowser edge    init -o edge.toml
+dotbrowser chrome  init -o chrome.toml
 ```
 
 ### `apply <config>` — write `[shortcuts]` + `[settings]` + `[pwa]`
@@ -162,6 +166,7 @@ dotbrowser brave   apply brave.toml --dry-run
 dotbrowser brave   apply brave.toml -k
 dotbrowser vivaldi apply vivaldi.toml -k
 dotbrowser edge    apply edge.toml -k
+dotbrowser chrome  apply chrome.toml -k
 dotbrowser brave   apply -k https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 ```
 
@@ -198,8 +203,9 @@ dotbrowser vivaldi shortcuts list           # full list
 | `-o, --output FILE` | Write to FILE instead of stdout. |
 
 ```bash
-dotbrowser brave settings dump
-dotbrowser edge  settings dump browser.show_home_button bookmark_bar.show_on_all_tabs
+dotbrowser brave  settings dump
+dotbrowser edge   settings dump browser.show_home_button bookmark_bar.show_on_all_tabs
+dotbrowser chrome settings dump bookmark_bar.show_on_all_tabs
 ```
 
 ### `settings blocked` — list MAC-protected keys `apply` will refuse
@@ -214,6 +220,7 @@ Walks `protection.macs` in your profile and prints every tracked pref path as co
 dotbrowser brave   settings blocked
 dotbrowser vivaldi settings blocked
 dotbrowser edge    settings blocked
+dotbrowser chrome  settings blocked
 ```
 
 ### `pwa dump` — emit currently-managed PWA URLs as TOML
@@ -228,6 +235,7 @@ Reads the managed-policy source for that browser (Linux: `/etc/<browser>/policie
 dotbrowser brave   pwa dump
 dotbrowser vivaldi pwa dump
 dotbrowser edge    pwa dump
+dotbrowser chrome  pwa dump
 ```
 
 ## How it works
@@ -238,7 +246,7 @@ dotbrowser edge    pwa dump
 
 ### Architecture
 
-All Chromium-based browsers share `src/dotbrowser/_base/`: orchestrator, settings logic (with MAC-protected refusal), PWA logic (sudo / registry write paths), and the platform-aware `BrowserProcess` class. Each browser module (`brave/`, `vivaldi/`, `edge/`) is a thin wrapper that configures `_base/` with its profile path, process names, policy file location, and any browser-specific quirks (Brave's numeric command IDs and `Meta+`↔`Command+` rewrite; Vivaldi's `vivaldi.actions[0]` storage shape). Adding a new Chromium browser is roughly 150 lines.
+All Chromium-based browsers share `src/dotbrowser/_base/`: orchestrator, settings logic (with MAC-protected refusal), PWA logic (sudo / registry write paths), and the platform-aware `BrowserProcess` class. Each browser module (`brave/`, `vivaldi/`, `edge/`, `chrome/`) is a thin wrapper that configures `_base/` with its profile path, process names, policy file location, and any browser-specific quirks (Brave's numeric command IDs and `Meta+`↔`Command+` rewrite; Vivaldi's `vivaldi.actions[0]` storage shape). Adding a new Chromium browser is roughly 150 lines.
 
 ### Brave install methods
 
@@ -258,7 +266,7 @@ Dual-install machines (e.g. `.deb` + Snap installed side-by-side) prefer the dir
 ## Caveats
 
 - **Cloud sync** (Brave Sync, Edge Sync, Vivaldi Sync) can overwrite `[settings]` entries on its next pulse if they fall in a synced category. UI-layout keys like `brave.tabs.vertical_tabs_*` are local-only and immune. `apply` prints a non-fatal warning when `sync.has_setup_completed=true` so you know to verify the change sticks.
-- **Brave / Vivaldi / Edge — not Chrome.** Chrome hardcodes keyboard shortcuts in C++ (there is no `Preferences` key to override), and most useful settings (`homepage`, `session.startup_urls`, `browser.show_home_button`, `pinned_tabs`, …) are MAC-protected in `Secure Preferences` — Chrome computes an HMAC per value and silently resets any externally-modified entry on launch. Brave and Vivaldi expose dedicated, non-MAC-protected prefs (`brave.accelerators`, `vivaldi.actions`) specifically for user customisation. Edge inherits Chromium's MAC protection on most prefs but has enough non-protected keys to make `[settings]` useful (and `[pwa]` works via the same enterprise-policy mechanism as Brave). Edge has no customisable accelerators — that's why `[shortcuts]` is unsupported there.
+- **Chrome — `[pwa]` works fully, `[settings]` works for non-MAC keys.** Chrome hardcodes keyboard shortcuts in C++ (there is no `[shortcuts]`), and many useful settings (`homepage`, `session.startup_urls`, `browser.show_home_button`, `pinned_tabs`, …) live in a *separate* `Secure Preferences` file with their own HMAC integrity. dotbrowser walks `protection.macs` from BOTH files when refusing MAC-protected keys, so those keys are correctly rejected up front rather than silently reset by Chrome on next launch — run `dotbrowser chrome settings blocked` to see exactly what Chrome will refuse on your profile. Use `[settings]` for non-MAC keys (`bookmark_bar.show_on_all_tabs`, `ntp.shortcust_visible`, …) and `[pwa]`, which uses Chromium's enterprise-policy mechanism and works fully. Brave and Vivaldi expose dedicated, non-MAC-protected prefs (`brave.accelerators`, `vivaldi.actions`) specifically for user customisation; Edge has enough non-protected keys to make `[settings]` useful too. Brave and Vivaldi support `[shortcuts]`; Edge and Chrome do not.
 - A handful of settings (`homepage`, default search engine, `pinned_tabs`, …) are integrity-protected and can't be patched yet — dotbrowser refuses them with a clear error rather than letting the change silently disappear on next launch. Set those via the browser UI for now.
 - **`[pwa]` is force-install** (Chromium's enterprise `WebAppInstallForceList`). Apps installed this way appear in `chrome://apps` (or `edge://apps`) with an "Installed by your administrator" label and the right-click "Remove" option is hidden — to uninstall, delete the URL from `[pwa]` and re-apply, then dotbrowser does the rest. This is the right semantics for dotfile-style management (the TOML is the source of truth) but worth knowing if you also install PWAs by hand via the address-bar Install button.
 

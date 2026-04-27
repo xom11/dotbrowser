@@ -85,8 +85,61 @@ def _sync_enabled(browser_name: str, prefs: dict) -> bool:
     return bool(cur)
 
 
-def _is_mac_protected(prefs: dict, parts: tuple[str, ...]) -> bool:
-    macs = prefs.get("protection", {}).get("macs", {})
+def _load_secure_prefs(prefs_path: Path) -> dict:
+    """Load the sibling ``Secure Preferences`` file as a dict.
+
+    Chrome stores most tracked-pref entries (and their HMAC integrity
+    bookkeeping) in a separate file named ``Secure Preferences`` next
+    to ``Preferences``.  Brave/Vivaldi/Edge use the same Chromium prefs
+    layout and may also write this file; checking it is conservative
+    for every browser in the family.
+
+    Returns ``{}`` if the file is absent, unreadable, or not valid JSON
+    -- the caller treats absence of MAC info as "not protected", which
+    matches the pre-Secure-Preferences behavior for all callers.
+    """
+    secure = prefs_path.with_name("Secure Preferences")
+    if not secure.exists():
+        return {}
+    try:
+        return json.loads(secure.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _deep_merge_macs(a: dict, b: dict) -> dict:
+    """Deep-merge two ``protection.macs`` subtrees.
+
+    Both files store HMACs at the same dotted-path shape, so a key
+    present in either file marks that path as tracked.  Values
+    themselves are HMAC strings; on the rare conflict (same key in
+    both files) ``b`` wins, but the only signal we use downstream is
+    presence vs. absence of the leaf, so the choice is immaterial.
+    """
+    out = dict(a)
+    for k, v in b.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge_macs(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _all_macs(prefs: dict, prefs_path: Path) -> dict:
+    """Union of MAC bookkeeping from ``Preferences`` and ``Secure Preferences``."""
+    main = prefs.get("protection", {}).get("macs", {})
+    if not isinstance(main, dict):
+        main = {}
+    secure_data = _load_secure_prefs(prefs_path)
+    secure_macs = secure_data.get("protection", {}).get("macs", {})
+    if not isinstance(secure_macs, dict):
+        secure_macs = {}
+    if not secure_macs:
+        return main
+    return _deep_merge_macs(main, secure_macs)
+
+
+def _is_mac_protected(macs: dict, parts: tuple[str, ...]) -> bool:
     cur: Any = macs
     for p in parts:
         if not isinstance(cur, dict) or p not in cur:
@@ -142,13 +195,14 @@ def diff_summary(
 def plan_apply(browser_name: str, prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     target = _validate_table(raw_table)
 
+    macs = _all_macs(prefs, prefs_path)
     rejected: list[str] = []
     for key in target:
         parts = _split_key(key)
         if parts[0] == "protection":
             rejected.append(f"{key} (Chromium MAC bookkeeping subtree)")
             continue
-        if _is_mac_protected(prefs, parts):
+        if _is_mac_protected(macs, parts):
             rejected.append(f"{key} (MAC-protected; writing would be reset on launch)")
     if rejected:
         sys.exit(
@@ -238,8 +292,9 @@ def cmd_blocked(browser_name: str, args: argparse.Namespace) -> None:
     prefs_path = find_preferences(args.profile_root, args.profile)
     prefs = load_prefs(prefs_path)
 
-    macs = prefs.get("protection", {}).get("macs", {})
+    macs = _all_macs(prefs, prefs_path)
     paths = sorted(_walk_mac_leaves(macs))
+    secure_prefs = _load_secure_prefs(prefs_path)
 
     title = browser_name.title()
     lines = [
@@ -254,6 +309,8 @@ def cmd_blocked(browser_name: str, args: argparse.Namespace) -> None:
         for parts in paths:
             key = ".".join(parts)
             cur = _get_value(prefs, parts)
+            if cur is _MISSING and secure_prefs:
+                cur = _get_value(secure_prefs, parts)
             if cur is _MISSING:
                 lines.append(f"# {json.dumps(key)} = ?  (not set in Preferences)")
                 continue

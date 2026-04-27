@@ -200,19 +200,19 @@ def test_get_nested_creates_intermediate_dicts() -> None:
 # ---------------------------------------------------------------------------
 
 def test_is_mac_protected_exact_match() -> None:
-    prefs = {"protection": {"macs": {"browser": {"show_home_button": "DEAD"}}}}
-    assert st._is_mac_protected(prefs, ("browser", "show_home_button")) is True
+    macs = {"browser": {"show_home_button": "DEAD"}}
+    assert st._is_mac_protected(macs, ("browser", "show_home_button")) is True
 
 
 def test_is_mac_protected_parent_of_tracked_leaf() -> None:
     """Writing the parent dict would clobber a tracked child, so we refuse it."""
-    prefs = {"protection": {"macs": {"browser": {"show_home_button": "DEAD"}}}}
-    assert st._is_mac_protected(prefs, ("browser",)) is True
+    macs = {"browser": {"show_home_button": "DEAD"}}
+    assert st._is_mac_protected(macs, ("browser",)) is True
 
 
 def test_is_mac_protected_not_in_tree() -> None:
-    prefs = {"protection": {"macs": {"browser": {"show_home_button": "DEAD"}}}}
-    assert st._is_mac_protected(prefs, ("brave", "tabs", "vertical_tabs_enabled")) is False
+    macs = {"browser": {"show_home_button": "DEAD"}}
+    assert st._is_mac_protected(macs, ("brave", "tabs", "vertical_tabs_enabled")) is False
 
 
 def test_is_mac_protected_no_protection_subtree() -> None:

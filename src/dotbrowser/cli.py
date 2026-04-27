@@ -16,6 +16,7 @@ import argparse
 
 from dotbrowser import __version__
 from dotbrowser.brave import register as register_brave
+from dotbrowser.chrome import register as register_chrome
 from dotbrowser.edge import register as register_edge
 from dotbrowser.vivaldi import register as register_vivaldi
 
@@ -28,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="browser", required=True, metavar="BROWSER")
     register_brave(sub)
+    register_chrome(sub)
     register_edge(sub)
     register_vivaldi(sub)
     return parser

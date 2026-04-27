@@ -1,0 +1,11 @@
+# `dotbrowser chrome apply` -- UI / behaviour settings only.
+# Keys are dotted paths into Chrome's profile `Preferences` JSON.
+# MAC-protected keys (homepage, default search, etc.) will be refused.
+
+[settings]
+
+# Bookmarks bar.
+"bookmark_bar.show_on_all_tabs"      = false  # Hide bookmarks bar
+
+# New Tab Page.
+"ntp.shortcust_visible"              = false  # Hide top-sites shortcut row

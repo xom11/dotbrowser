@@ -28,11 +28,13 @@ dotbrowser brave settings dump
 dotbrowser brave settings blocked       # MAC-protected keys `apply` refuses
 dotbrowser brave pwa dump
 
-# Same commands work for vivaldi and edge
+# Same commands work for vivaldi, edge, and chrome
 dotbrowser vivaldi init
 dotbrowser vivaldi apply examples/vivaldi/all.toml
 dotbrowser edge init
 dotbrowser edge apply examples/edge/all.toml
+dotbrowser chrome init
+dotbrowser chrome apply examples/chrome/all.toml
 
 # Regenerate command_ids.py from upstream Chromium + brave-core headers
 # (requires `gh` CLI authenticated)
@@ -57,6 +59,7 @@ Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]
 - `test_unified_apply.py` — cross-module orchestration: combined diff, single backup per apply, settings-refusal blocking shortcuts write, missing-vs-empty table semantics, and the three-namespace (shortcuts + settings + pwa) round-trip.
 - `test_pwa_apply.py` — `[pwa]`-only end-to-end. Runs on Linux, macOS, and Windows. Redirects `pwa.POLICY_FILE` into `tmp_path` (Linux/macOS) or monkeypatches registry read/write to a temp JSON file (Windows) and stubs the privilege preflight, so the suite never touches `/etc/`, `/Library/`, the registry, or prompts for credentials.
 - `test_edge_apply.py` — Edge settings apply, MAC refusal, dry-run, empty-config error, and `init` command. Same pattern as the Brave apply tests but for Edge (settings + pwa only, no shortcuts).
+- `test_chrome_apply.py` — Chrome settings apply, MAC refusal (covers both `Preferences.protection.macs` and `Secure Preferences.protection.macs`), dry-run, empty-config error, `init`, and the full pwa lifecycle. Mirrors `test_edge_apply.py`.
 
 The `--kill-browser` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
@@ -64,7 +67,7 @@ The `--kill-browser` path is intentionally NOT covered by pytest (it would inter
 
 **CLI shape: `dotbrowser <BROWSER> [browser-options] <ACTION> [args]`**
 
-Supported browsers: **Brave** (shortcuts + settings + pwa), **Vivaldi** (shortcuts + settings + pwa), **Edge** (settings + pwa). Edge does not support custom keyboard shortcuts via Preferences.
+Supported browsers: **Brave** (shortcuts + settings + pwa), **Vivaldi** (shortcuts + settings + pwa), **Edge** (settings + pwa), **Chrome** (settings + pwa). Edge and Chrome do not support custom keyboard shortcuts via Preferences.
 
 `apply` is at the browser level -- one command writes `[shortcuts]`, `[settings]` and `[pwa]` from a single TOML file in a single backup + write cycle. `init` scaffolds a starter config. Per-module subcommands (`shortcuts`, `settings`, `pwa`) only host read-only inspection actions (`dump`, `list`).
 
@@ -117,7 +120,7 @@ brave/utils         -> BROWSER_PROCESS config + backward-compat aliases
 brave/command_ids   -> auto-generated IDC_* -> numeric ID mapping.
 ```
 
-Vivaldi follows the same pattern. Edge is simpler (no shortcuts module).
+Vivaldi follows the same pattern. Edge and Chrome are simpler (no shortcuts module — neither browser exposes a customizable accelerator API in `Preferences`).
 
 **The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure -- validates the TOML table, reads existing state, computes the diff, and returns a `Plan` with `namespace`, `diff_lines`, `apply_fn(prefs)`, `verify_fn(reloaded)`, plus optional `state_path`/`state_payload` (for sidecar persistence) and optional `external_apply_fn` (for side effects outside `Preferences`, like pwa's policy file write). The orchestrator collects plans, prints the combined diff, runs a sudo preflight if any plan has an `external_apply_fn`, then in order: kills the browser (if needed), backs up Preferences, runs all `apply_fn`s against one in-memory dict, runs all `external_apply_fn`s (privileged side-effects like the pwa policy write), `write_atomic` (commits Preferences), writes state sidecars, runs `verify_fn`s. External writes run *before* `write_atomic` so a sudo/I/O failure leaves Preferences untouched -- the alternative ordering committed prefs first and could strand the user with shortcuts/settings applied but pwa silently un-applied. This guarantees: one backup per apply, no partial writes if any module rejects, sudo prompts come *before* the kill so an auth failure doesn't strand the user with a dead browser, and a single kill-browser + restart cycle.
 
@@ -180,7 +183,8 @@ This is the load-bearing knowledge for `_base/settings.py` (shared by all browse
 
 6. **`dump` semantics.** With no args, dump emits currently-managed keys. With explicit keys, it emits those — useful for "what's the current value?" discovery before adding a key to a config. Missing keys appear as commented-out lines so the user knows we looked but didn't find them.
 
-7. **Brave Sync warning.** When `sync.has_setup_completed` is true and `[settings]` would write or remove keys, `plan_apply` attaches a non-fatal warning to the returned `Plan`. The orchestrator prints all `Plan.warnings` between the `target:` line and the diff sections. Rationale: synced prefs can be silently overwritten on Sync's next pulse, which looks like dotbrowser being broken when it isn't. The warning is conservative on purpose — `sync.has_setup_completed` stays true after sign-out, so we may warn slightly more often than strictly needed; that's the right side to err on. Most user-configurable prefs aren't actually synced (the commonly-synced ones — homepage, default search, startup URLs — are MAC-protected and already refused), so the warning is mostly defensive. Implemented via `_sync_enabled(browser_name, prefs)` which dispatches through `_SYNC_KEY_BY_BROWSER`. Brave and Edge share the Chromium key `sync.has_setup_completed`; Vivaldi has its own sync stack and uses `vivaldi.sync.has_setup_completed`. The Vivaldi key is best-effort (no upstream contract guarantees it stays stable across versions); if Vivaldi changes its schema the warning may fire when sync is off, which is acceptable -- false-positive beats false-negative for a defensive warning. An unknown browser falls back to the Chromium key.
+7. **MAC bookkeeping is read from BOTH ``Preferences`` and ``Secure Preferences``.** Brave/Vivaldi/Edge keep most tracked-pref MACs inside the regular `Preferences` file under `protection.macs.<dotted_path>`. Chrome puts most of its tracked-pref MACs in a *separate* file, `Secure Preferences`, alongside `Preferences`, under the same `protection.macs` shape. `_all_macs(prefs, prefs_path)` deep-merges the two `protection.macs` subtrees so `_is_mac_protected` and `_walk_mac_leaves` see a single union view; `_load_secure_prefs` returns `{}` when the sibling file is absent or unreadable, which preserves pre-existing behavior for browsers that don't use it. `cmd_blocked` also falls back to `Secure Preferences` for value lookup so users can see what's currently set in Chrome's split storage. Without this, `apply` would silently accept keys like `homepage` or `browser.show_home_button` for Chrome and Chrome would reset them on next launch.
+8. **Brave Sync warning.** When `sync.has_setup_completed` is true and `[settings]` would write or remove keys, `plan_apply` attaches a non-fatal warning to the returned `Plan`. The orchestrator prints all `Plan.warnings` between the `target:` line and the diff sections. Rationale: synced prefs can be silently overwritten on Sync's next pulse, which looks like dotbrowser being broken when it isn't. The warning is conservative on purpose — `sync.has_setup_completed` stays true after sign-out, so we may warn slightly more often than strictly needed; that's the right side to err on. Most user-configurable prefs aren't actually synced (the commonly-synced ones — homepage, default search, startup URLs — are MAC-protected and already refused), so the warning is mostly defensive. Implemented via `_sync_enabled(browser_name, prefs)` which dispatches through `_SYNC_KEY_BY_BROWSER`. Brave and Edge share the Chromium key `sync.has_setup_completed`; Vivaldi has its own sync stack and uses `vivaldi.sync.has_setup_completed`. The Vivaldi key is best-effort (no upstream contract guarantees it stays stable across versions); if Vivaldi changes its schema the warning may fire when sync is off, which is acceptable -- false-positive beats false-negative for a defensive warning. An unknown browser falls back to the Chromium key.
 
 ### PWA: how force-install actually works
 
