@@ -298,3 +298,85 @@ def test_blocked_writes_to_output_file(
     content = out_file.read_text()
     assert '"browser.show_home_button"' in content
     assert '"homepage"' in content
+
+
+# ---------------------------------------------------------------------------
+# Brave Sync warning (#7)
+# ---------------------------------------------------------------------------
+
+def _enable_sync(profile_root: Path) -> None:
+    """Set sync.has_setup_completed=true on the fake profile in place."""
+    prefs_path = profile_root / "Default" / "Preferences"
+    prefs = json.loads(prefs_path.read_text())
+    prefs.setdefault("sync", {})["has_setup_completed"] = True
+    prefs_path.write_text(json.dumps(prefs))
+
+
+def test_sync_warning_fires_when_sync_enabled(
+    fake_settings_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """When the profile has Brave Sync set up, applying [settings] must
+    print a non-fatal warning before the diff."""
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+    _enable_sync(fake_settings_profile_root)
+
+    cfg = tmp_path / "settings.toml"
+    _write_config(cfg, {"brave.tabs.vertical_tabs_enabled": True})
+
+    r = _run_cli(fake_settings_profile_root, "apply", str(cfg), "--dry-run")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert "Brave Sync is enabled" in out
+    assert "warning:" in out
+    # Warning must come before the diff section.
+    assert out.index("warning:") < out.index("settings:")
+
+
+def test_no_sync_warning_when_sync_disabled(
+    fake_settings_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Default profile has no sync.has_setup_completed key, so applying
+    must NOT mention sync."""
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+
+    cfg = tmp_path / "settings.toml"
+    _write_config(cfg, {"brave.tabs.vertical_tabs_enabled": True})
+
+    r = _run_cli(fake_settings_profile_root, "apply", str(cfg), "--dry-run")
+    assert r.returncode == 0, r.stderr
+    assert "Sync" not in r.stdout
+    assert "warning:" not in r.stdout
+
+
+def test_sync_warning_does_not_block_apply(
+    fake_settings_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """The warning is non-fatal: a real apply must still succeed and
+    write the change."""
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+    _enable_sync(fake_settings_profile_root)
+
+    cfg = tmp_path / "settings.toml"
+    _write_config(cfg, {"brave.tabs.vertical_tabs_enabled": True})
+    _apply(fake_settings_profile_root, cfg)
+
+    p = _prefs(fake_settings_profile_root)
+    assert p["brave"]["tabs"]["vertical_tabs_enabled"] is True
+
+
+def test_no_sync_warning_when_settings_table_empty(
+    fake_settings_profile_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Sync warning only fires when [settings] would actually write or
+    remove keys -- a no-op apply (empty table, nothing previously
+    managed) must not warn."""
+    monkeypatch.setattr(brave_pkg, "brave_running", lambda: False)
+    _enable_sync(fake_settings_profile_root)
+
+    cfg = tmp_path / "empty.toml"
+    cfg.write_text("[settings]\n")
+
+    r = _run_cli(fake_settings_profile_root, "apply", str(cfg), "--dry-run")
+    # Empty + no managed keys -> no changes; either succeeds with no
+    # diff, or returns no-op -- either way, no sync warning.
+    assert "Brave Sync" not in r.stdout

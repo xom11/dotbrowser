@@ -55,6 +55,18 @@ def _pop_value(prefs: dict, parts: tuple[str, ...]) -> None:
         cur.pop(parts[-1], None)
 
 
+def _sync_enabled(prefs: dict) -> bool:
+    """Whether the user has set up Chromium-style sync.
+
+    ``sync.has_setup_completed`` is the canonical post-setup flag; it
+    stays true even if the user later signs out, so the check is
+    conservative (warns slightly more often than strictly needed).
+    Brave, Edge, and Vivaldi all surface this same key when their
+    underlying sync is active.
+    """
+    return bool(prefs.get("sync", {}).get("has_setup_completed"))
+
+
 def _is_mac_protected(prefs: dict, parts: tuple[str, ...]) -> bool:
     macs = prefs.get("protection", {}).get("macs", {})
     cur: Any = macs
@@ -133,6 +145,19 @@ def plan_apply(browser_name: str, prefs_path: Path, prefs: dict, raw_table: obje
 
     diff = diff_summary(prefs, target, removed_keys)
 
+    warnings: list[str] = []
+    if (target or removed_keys) and _sync_enabled(prefs):
+        warnings.append(
+            f"warning: {browser_name.title()} Sync is enabled "
+            f"(sync.has_setup_completed=true).\n"
+            f"  Synced settings can be overwritten on Sync's next pulse "
+            f"from another device.\n"
+            f"  Most keys dotbrowser writes are local-only -- the commonly "
+            f"synced ones (homepage,\n"
+            f"  default search, startup URLs) are MAC-protected and already "
+            f"refused.  Proceeding."
+        )
+
     def apply_fn(prefs: dict) -> None:
         for key, value in target.items():
             _set_value(prefs, _split_key(key), value)
@@ -152,6 +177,7 @@ def plan_apply(browser_name: str, prefs_path: Path, prefs: dict, raw_table: obje
         state_payload={"managed_keys": sorted(target_keys)},
         apply_fn=apply_fn,
         verify_fn=verify_fn,
+        warnings=warnings,
     )
 
 

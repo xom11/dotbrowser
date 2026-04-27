@@ -98,6 +98,9 @@ def cmd_apply(
         return
 
     print(f"target: {prefs_path}")
+    for plan in plans:
+        for warning in plan.warnings:
+            print(warning)
     for plan in non_empty:
         print(f"{plan.namespace}:")
         print("\n".join(plan.diff_lines))

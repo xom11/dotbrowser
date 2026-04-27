@@ -180,6 +180,8 @@ This is the load-bearing knowledge for `_base/settings.py` (shared by all browse
 
 6. **`dump` semantics.** With no args, dump emits currently-managed keys. With explicit keys, it emits those — useful for "what's the current value?" discovery before adding a key to a config. Missing keys appear as commented-out lines so the user knows we looked but didn't find them.
 
+7. **Brave Sync warning.** When `sync.has_setup_completed` is true and `[settings]` would write or remove keys, `plan_apply` attaches a non-fatal warning to the returned `Plan`. The orchestrator prints all `Plan.warnings` between the `target:` line and the diff sections. Rationale: synced prefs can be silently overwritten on Sync's next pulse, which looks like dotbrowser being broken when it isn't. The warning is conservative on purpose — `sync.has_setup_completed` stays true after sign-out, so we may warn slightly more often than strictly needed; that's the right side to err on. Most user-configurable prefs aren't actually synced (the commonly-synced ones — homepage, default search, startup URLs — are MAC-protected and already refused), so the warning is mostly defensive. Implemented via `_sync_enabled(prefs)` reading `prefs["sync"]["has_setup_completed"]`. Same key works across Brave / Edge (Chromium-based sync); Vivaldi uses `vivaldi.sync.*` and is currently not detected — fine to revisit if Vivaldi users hit the failure mode.
+
 ### PWA: how force-install actually works
 
 This is the load-bearing knowledge for `_base/pwa.py` and the per-browser `pwa.py` wrappers:
