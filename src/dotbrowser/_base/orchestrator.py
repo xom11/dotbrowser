@@ -228,7 +228,9 @@ def cmd_apply(
 
     for plan in plans:
         if plan.state_path is not None:
-            plan.state_path.write_text(json.dumps(plan.state_payload, indent=2))
+            plan.state_path.write_text(
+                json.dumps(plan.state_payload, indent=2), encoding="utf-8",
+            )
 
     reloaded = load_prefs(prefs_path)
     for plan in plans:

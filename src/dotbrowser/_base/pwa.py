@@ -148,7 +148,7 @@ def read_existing_payload(
             with policy_file.open("rb") as f:
                 data = plistlib.load(f)
         else:
-            data = json.loads(policy_file.read_text())
+            data = json.loads(policy_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, plistlib.InvalidFileException, OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -353,7 +353,7 @@ def cmd_dump(
     )
     out = "\n".join(lines) + "\n"
     if args.output:
-        Path(args.output).write_text(out)
+        Path(args.output).write_text(out, encoding="utf-8")
         print(f"wrote {args.output}")
     else:
         sys.stdout.write(out)

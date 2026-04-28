@@ -50,7 +50,7 @@ def find_preferences(profile_root: Path, profile: str) -> Path:
 
 
 def load_prefs(path: Path) -> dict:
-    with path.open() as f:
+    with path.open(encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -62,6 +62,6 @@ def get_nested(d: dict, keys: tuple[str, ...]) -> dict:
 
 def write_atomic(path: Path, prefs: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w") as f:
-        json.dump(prefs, f, separators=(",", ":"))
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(prefs, f, separators=(",", ":"), ensure_ascii=False)
     os.replace(tmp, path)

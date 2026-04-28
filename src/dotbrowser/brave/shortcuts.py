@@ -111,7 +111,7 @@ def _get_managed_ids(prefs_path: Path) -> set[str]:
     if not state.exists():
         return set()
     try:
-        data = json.loads(state.read_text())
+        data = json.loads(state.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return set()
     return set(data.get("managed_ids", []))
@@ -209,7 +209,7 @@ def cmd_dump(args: argparse.Namespace) -> None:
     lines = build_dump_block(prefs, all_bindings=args.all, header_comment=header)
     out = "\n".join(lines) + "\n"
     if args.output:
-        Path(args.output).write_text(out)
+        Path(args.output).write_text(out, encoding="utf-8")
         print(f"wrote {args.output}")
     else:
         sys.stdout.write(out)

@@ -102,7 +102,7 @@ def _load_secure_prefs(prefs_path: Path) -> dict:
     if not secure.exists():
         return {}
     try:
-        return json.loads(secure.read_text())
+        return json.loads(secure.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -163,7 +163,7 @@ def _get_managed_keys(prefs_path: Path) -> set[str]:
     if not state.exists():
         return set()
     try:
-        data = json.loads(state.read_text())
+        data = json.loads(state.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return set()
     return set(data.get("managed_keys", []))
@@ -322,7 +322,7 @@ def cmd_blocked(browser_name: str, args: argparse.Namespace) -> None:
 
     out = "\n".join(lines) + "\n"
     if args.output:
-        Path(args.output).write_text(out)
+        Path(args.output).write_text(out, encoding="utf-8")
         print(f"wrote {args.output}")
     else:
         sys.stdout.write(out)
@@ -357,7 +357,7 @@ def cmd_dump(browser_name: str, args: argparse.Namespace) -> None:
             lines.append(f"#   {k}")
     out = "\n".join(lines) + "\n"
     if args.output:
-        Path(args.output).write_text(out)
+        Path(args.output).write_text(out, encoding="utf-8")
         print(f"wrote {args.output}")
     else:
         sys.stdout.write(out)
