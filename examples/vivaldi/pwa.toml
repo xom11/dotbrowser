@@ -7,7 +7,11 @@
 #
 # Two important differences from [shortcuts] / [settings]:
 #   - REQUIRES SUDO. The policy file is root-owned:
-#       Linux: /etc/vivaldi/policies/managed/dotbrowser-pwa.json
+#       Linux: /etc/chromium/policies/managed/dotbrowser-pwa.json
+#              (Vivaldi compiles in /etc/chromium/policies as its
+#              managed-policy search dir on Linux, so chromium-browser
+#              and Vivaldi share the directory; the filename keeps our
+#              entry namespaced.)
 #       macOS: /Library/Managed Preferences/com.vivaldi.Vivaldi.plist
 #   - REQUIRES VIVALDI RESTART. Policies load at startup only — pass
 #     `--kill-browser` (`-k`) to apply immediately.
