@@ -143,6 +143,48 @@ def test_apply_unknown_command_errors(
     assert before == after
 
 
+def _make_uninitialized_profile_root(tmp_path: Path) -> Path:
+    """Profile root mirroring a freshly-installed Vivaldi: no
+    `vivaldi.actions` key in Preferences. Reproduces the failure mode
+    seen on Linux profiles that have never visited Settings -> Keyboard.
+    """
+    profile = tmp_path / "Default"
+    profile.mkdir()
+    (profile / "Preferences").write_text(json.dumps({"vivaldi": {}}))
+    return tmp_path
+
+
+def test_apply_uninitialized_profile_emits_seeding_hint(tmp_path: Path) -> None:
+    """The seeding hint must reach the user via the CLI (not just the
+    pure-logic path) and Preferences must remain untouched.
+    """
+    profile_root = _make_uninitialized_profile_root(tmp_path)
+    cfg = tmp_path / "v.toml"
+    cfg.write_text('[shortcuts]\nCOMMAND_CLOSE_TAB = ["meta+w"]\n')
+
+    before = (profile_root / "Default" / "Preferences").read_bytes()
+    r = _run_cli(profile_root, "apply", str(cfg))
+    assert r.returncode != 0
+    combined = r.stdout + r.stderr
+    assert "has not seeded" in combined
+    # The misleading typo-flavored hint must NOT be the one shown here.
+    assert "unknown Vivaldi command" not in combined
+    after = (profile_root / "Default" / "Preferences").read_bytes()
+    assert before == after
+
+
+def test_list_on_uninitialized_profile_shows_hint(tmp_path: Path) -> None:
+    """`shortcuts list` against an unseeded profile prints `0 commands`
+    plus the seeding hint, so users running it to diagnose the apply
+    failure get the same actionable advice.
+    """
+    profile_root = _make_uninitialized_profile_root(tmp_path)
+    r = _run_cli(profile_root, "shortcuts", "list")
+    assert r.returncode == 0
+    assert "0 commands" in r.stderr
+    assert "has not seeded" in r.stderr
+
+
 def test_dump_against_fake_profile(fake_vivaldi_profile_root: Path) -> None:
     """`shortcuts dump` (default) emits commands with non-empty bindings."""
     r = _run_cli(fake_vivaldi_profile_root, "shortcuts", "dump")

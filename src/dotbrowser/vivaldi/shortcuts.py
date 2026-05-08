@@ -50,6 +50,20 @@ from dotbrowser.vivaldi.utils import (
 ACTIONS_KEY_PATH = ("vivaldi", "actions")
 NAMESPACE = "shortcuts"
 
+# Shown when `vivaldi.actions[0]` is empty / missing. Vivaldi only writes
+# the compiled-in command catalog into Preferences after the user touches
+# Settings -> Keyboard and the browser flushes on a clean quit. Without
+# this hint, the user sees "unknown command" for every standard COMMAND_*
+# (or "0 commands" from `shortcuts list`) with no path to the fix.
+_UNINITIALIZED_HINT = (
+    "this Vivaldi profile has not seeded its keyboard command catalog yet "
+    "(`vivaldi.actions[0]` in Preferences is empty or missing). Vivaldi "
+    "writes the catalog only after Settings -> Keyboard has been touched "
+    "and the browser has been fully quit (not just window-closed). "
+    "Open Vivaldi, change or reset any shortcut under Settings -> Keyboard, "
+    "quit the browser entirely so it flushes Preferences, then re-run."
+)
+
 
 def _validate_table(raw: object) -> dict[str, list[str]]:
     if not isinstance(raw, dict):
@@ -142,6 +156,13 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     """
     config = _validate_table(raw_table)
     current = _get_actions_dict(prefs)
+
+    # Distinguish "uninitialized profile" from "user typo" before the
+    # generic unknown-command check: against an empty catalog every name
+    # would be reported unknown, and the typo-flavored hint pointing to
+    # `shortcuts list` is a dead end (it would also print 0 commands).
+    if config and not current:
+        sys.exit("error: " + _UNINITIALIZED_HINT)
 
     unknown = sorted(name for name in config if name not in current)
     if unknown:
@@ -282,6 +303,11 @@ def cmd_list(args: argparse.Namespace) -> None:
     for name in rows:
         print(name)
     print(f"\n{len(rows)} commands", file=sys.stderr)
+    # Empty catalog is almost always an uninitialized profile, not a
+    # too-narrow filter. Surface the same hint `apply` uses so users
+    # who run `list` to diagnose land on the answer.
+    if not actions:
+        print(_UNINITIALIZED_HINT, file=sys.stderr)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
