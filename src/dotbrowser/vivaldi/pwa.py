@@ -12,9 +12,18 @@ from dotbrowser._base.utils import Plan, find_preferences
 NAMESPACE = _base.NAMESPACE
 POLICY_KEY = _base.POLICY_KEY
 
+# Vivaldi on Linux compiles its managed-policy search path to
+# ``/etc/chromium/policies`` (verifiable with
+# ``strings /opt/vivaldi/vivaldi-bin | grep '/etc/.*polic'`` -- the only
+# match), so a file at the ``/etc/vivaldi/...`` path many users assume
+# from the brand name is silently ignored.  This means our policy
+# shares a directory with chromium-browser if both are installed; the
+# ``dotbrowser-pwa.json`` filename keeps it namespaced.  macOS reads
+# from the Vivaldi-specific bundle plist; Windows uses a
+# Vivaldi-specific registry key.
 _PWA_CONFIG = _base.PwaConfig(
     browser_name="vivaldi",
-    linux_policy_path="/etc/vivaldi/policies/managed/dotbrowser-pwa.json",
+    linux_policy_path="/etc/chromium/policies/managed/dotbrowser-pwa.json",
     macos_plist_path="/Library/Managed Preferences/com.vivaldi.Vivaldi.plist",
     windows_registry_key=r"Software\Policies\Vivaldi",
 )

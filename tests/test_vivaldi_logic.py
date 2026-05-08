@@ -243,3 +243,15 @@ def test_pwa_validate_rejects_non_https() -> None:
         pwa._validate_table({"urls": ["javascript:alert(1)"]})
     with pytest.raises(SystemExit, match="must start with https://"):
         pwa._validate_table({"urls": ["http://example.com/"]})
+
+
+def test_pwa_linux_policy_path_lives_in_chromium_dir() -> None:
+    """Vivaldi compiles ``/etc/chromium/policies`` (not
+    ``/etc/vivaldi/policies``) as its managed-policy search path on
+    Linux -- a file written to the brand-named directory is silently
+    ignored.  Lock the corrected path so a future refactor can't
+    revert it without the test screaming.
+    """
+    assert pwa._PWA_CONFIG.linux_policy_path.startswith(
+        "/etc/chromium/policies/managed/"
+    ), pwa._PWA_CONFIG.linux_policy_path
