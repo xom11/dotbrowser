@@ -167,6 +167,41 @@ def test_plan_apply_rejects_unknown_command(tmp_path: Path) -> None:
         sc.plan_apply(prefs_path, prefs, {"COMMAND_NOT_REAL": ["x"]})
 
 
+def test_plan_apply_uninitialized_profile_distinct_error(tmp_path: Path) -> None:
+    """A fresh Vivaldi profile that hasn't visited Settings -> Keyboard
+    has an empty (or missing) `vivaldi.actions[0]`. Against that, every
+    standard COMMAND_* would otherwise be reported as unknown — pointing
+    the user toward `shortcuts list`, which is also empty. Detect this
+    case explicitly and emit the seeding hint instead.
+    """
+    prefs_path = tmp_path / "Preferences"
+    prefs = _make_prefs({})  # actions[0] = {}, the uninitialized shape
+    with pytest.raises(SystemExit, match="has not seeded"):
+        sc.plan_apply(prefs_path, prefs, {"COMMAND_CLOSE_TAB": ["meta+w"]})
+
+
+def test_plan_apply_missing_actions_key_distinct_error(tmp_path: Path) -> None:
+    """Same as above but the `vivaldi.actions` key is absent entirely
+    (observed on freshly-installed Linux profiles). The seeding hint
+    must fire here too — not the unknown-command branch.
+    """
+    prefs_path = tmp_path / "Preferences"
+    prefs: dict = {"vivaldi": {}}
+    with pytest.raises(SystemExit, match="has not seeded"):
+        sc.plan_apply(prefs_path, prefs, {"COMMAND_CLOSE_TAB": ["meta+w"]})
+
+
+def test_plan_apply_empty_table_on_uninitialized_profile_is_noop(tmp_path: Path) -> None:
+    """If both the profile *and* the user's `[shortcuts]` table are
+    empty, there's nothing to apply — the seeding hint should NOT fire
+    because we have no commands to validate.
+    """
+    prefs_path = tmp_path / "Preferences"
+    prefs = _make_prefs({})
+    plan = sc.plan_apply(prefs_path, prefs, {})
+    assert plan.diff_lines == []
+
+
 def test_plan_apply_diff_lines_shapes(tmp_path: Path) -> None:
     """Verify the diff line prefixes for the three transitions:
     + new (no current entry), ~ change, - restore."""
