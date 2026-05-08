@@ -41,6 +41,12 @@ dotbrowser edge apply examples/edge/all.toml
 dotbrowser chrome init
 dotbrowser chrome apply examples/chrome/all.toml
 
+# Vivaldi-only: query the prefs schema (uses Vivaldi's bundled
+# prefs_definitions.json; falls back gracefully if it can't be found,
+# overridable via DOTBROWSER_VIVALDI_PREFS_DEF)
+dotbrowser vivaldi settings search "tab bar position"
+dotbrowser vivaldi settings describe vivaldi.tabs.bar.position
+
 # Regenerate command_ids.py from upstream Chromium + brave-core headers
 # (requires `gh` CLI authenticated)
 python scripts/generate_brave_command_ids.py
@@ -66,6 +72,7 @@ Tests live under `tests/` and use `pytest` (install via `pip install -e ".[test]
 - `test_edge_apply.py` — Edge settings apply, MAC refusal, dry-run, empty-config error, and `init` command. Same pattern as the Brave apply tests but for Edge (settings + pwa only, no shortcuts).
 - `test_chrome_apply.py` — Chrome settings apply, MAC refusal (covers both `Preferences.protection.macs` and `Secure Preferences.protection.macs`), dry-run, empty-config error, `init`, and the full pwa lifecycle. Mirrors `test_edge_apply.py`.
 - `test_export.py` — `<browser> export` for all four browsers. Redirects each browser's `pwa.POLICY_FILE` and `_read_existing_payload` to a tmp JSON file (same pattern as `test_pwa_apply.py`) so reads are deterministic without touching `/etc/`, `/Library/`, or the registry. Verifies (a) Brave's `[shortcuts]` is a diff against `brave.default_accelerators` and `--all-shortcuts` lifts that filter, (b) `[pwa]` reflects the seeded policy file, (c) Edge/Chrome omit `[shortcuts]` entirely, (d) Vivaldi emits every command with non-empty bindings (no defaults mirror to diff against), (e) the exported TOML is parseable and round-trips through `plan_apply` as a no-op.
+- `test_vivaldi_schema.py` — Vivaldi-only prefs-schema layer. Schema discovery via `DOTBROWSER_VIVALDI_PREFS_DEF`, flattening of both shapes (`vivaldi.*` nested tree and `chromium`/`chromium_local` `{kIdent: {path, type}}` tables), enum-name → int coercion, type-mismatch errors, unknown-key warning suppression for keys already present in `Preferences`, the `plan_apply` integration (warnings flow through `Plan.warnings`), and the `settings search` / `settings describe` CLI commands.
 
 The `--kill-browser` path is intentionally NOT covered by pytest (it would interrupt the user's running browser). Verify it manually after code changes.
 
@@ -128,7 +135,7 @@ brave/utils         -> BROWSER_PROCESS config + backward-compat aliases
 brave/command_ids   -> auto-generated IDC_* -> numeric ID mapping.
 ```
 
-Vivaldi follows the same pattern. Edge and Chrome are simpler (no shortcuts module — neither browser exposes a customizable accelerator API in `Preferences`).
+Vivaldi follows the same pattern, with one extra: `vivaldi/schema.py` reads the `prefs_definitions.json` Vivaldi ships at `<install>/resources/vivaldi/prefs_definitions.json` (Brave/Edge/Chrome don't ship a comparable file). Used for two things: (1) `vivaldi/settings.plan_apply` runs `coerce_and_validate` against the schema before delegating to `_base.settings.plan_apply`, so enum-name strings (`"left"`) are coerced to the int Vivaldi actually stores (`1`) and obvious type mismatches abort the apply with a clear error rather than silently no-op at runtime; (2) `settings search` and `settings describe` subcommands provide discoverability without grepping the 25k-line schema by hand. The loader is graceful when the schema can't be located -- `apply` falls back to the pre-schema behavior (write blindly) and the new subcommands print "schema not found". Override path with `DOTBROWSER_VIVALDI_PREFS_DEF`. The unknown-key warning suppresses for keys already present in `Preferences` because Vivaldi has many runtime-set prefs (e.g. `vivaldi.tabs.vertical_tabs_enabled`) that aren't declared in the schema -- naive warning would fire on every legitimate write. Edge and Chrome are simpler (no shortcuts module — neither browser exposes a customizable accelerator API in `Preferences`).
 
 **The `Plan` dataclass is the contract between modules and the orchestrator.** Each module's `plan_apply()` is pure -- validates the TOML table, reads existing state, computes the diff, and returns a `Plan` with `namespace`, `diff_lines`, `apply_fn(prefs)`, `verify_fn(reloaded)`, plus optional `state_path`/`state_payload` (for sidecar persistence) and optional `external_apply_fn` (for side effects outside `Preferences`, like pwa's policy file write). The orchestrator collects plans, prints the combined diff, runs a sudo preflight if any plan has an `external_apply_fn`, then in order: kills the browser (if needed), backs up Preferences, runs all `apply_fn`s against one in-memory dict, runs all `external_apply_fn`s (privileged side-effects like the pwa policy write), `write_atomic` (commits Preferences), writes state sidecars, runs `verify_fn`s. External writes run *before* `write_atomic` so a sudo/I/O failure leaves Preferences untouched -- the alternative ordering committed prefs first and could strand the user with shortcuts/settings applied but pwa silently un-applied. This guarantees: one backup per apply, no partial writes if any module rejects, sudo prompts come *before* the kill so an auth failure doesn't strand the user with a dead browser, and a single kill-browser + restart cycle.
 
