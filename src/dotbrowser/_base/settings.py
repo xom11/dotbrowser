@@ -363,7 +363,17 @@ def cmd_dump(browser_name: str, args: argparse.Namespace) -> None:
         sys.stdout.write(out)
 
 
-def register(browser_name: str, subparsers: argparse._SubParsersAction) -> None:
+def register(
+    browser_name: str, subparsers: argparse._SubParsersAction
+) -> argparse._SubParsersAction:
+    """Register the ``settings`` subcommand and return its action sub-parser.
+
+    The returned object is the inner ``add_subparsers()`` action; per-
+    browser modules append extra actions (e.g. Vivaldi adds ``search``
+    and ``describe`` once the prefs schema is loaded) by calling
+    ``add_parser()`` on it.  Browsers that don't extend ignore the
+    return value -- behavior is unchanged.
+    """
     p = subparsers.add_parser(
         "settings",
         help=f"inspect general settings (apply lives at `{browser_name} apply`)",
@@ -388,3 +398,5 @@ def register(browser_name: str, subparsers: argparse._SubParsersAction) -> None:
     )
     b.add_argument("-o", "--output", help="write to file instead of stdout")
     b.set_defaults(func=lambda args, bn=browser_name: cmd_blocked(bn, args))
+
+    return sub
