@@ -220,8 +220,13 @@ def cmd_apply(
     # failure here leaves Preferences unchanged.  The previous ordering
     # left prefs committed but the policy file un-applied if sudo
     # flaked, breaking the "single cycle" promise.
+    #
+    # Skip empty plans: needs_escalation above only checks non-empty plans
+    # for sudo, so calling external_apply_fn on an empty plan here would
+    # invoke sudo without the cache check -- and crash in non-interactive
+    # contexts (e.g. home-manager activation) where sudo isn't on PATH.
     for plan in plans:
-        if plan.external_apply_fn is not None:
+        if plan.external_apply_fn is not None and not plan.empty:
             plan.external_apply_fn()
 
     write_atomic(prefs_path, prefs)
