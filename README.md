@@ -302,15 +302,24 @@ by reloading. Edge and Chrome still use this offline path; if they are
 running, close them first or pass `-k`.
 
 For Brave and Vivaldi, plain `apply` uses the browser's own privileged
-UI APIs whenever the browser is running: Brave settings go through
-`chrome.settingsPrivate`, Brave shortcuts through its Settings
-`CommandsService`, and Vivaldi settings/shortcuts through
-`vivaldi.prefs`. Vivaldi shortcut changes reload the internal Vivaldi UI
-page so the new accelerators are registered. If the browser already has
-a live endpoint, existing windows stay open. If it was not already
-launched with an endpoint, dotbrowser asks it to close normally and
-relaunches it once because Chromium cannot add DevTools flags to an
+UI APIs whenever the browser is running: ordinary Brave settings go
+through `chrome.settingsPrivate`, Brave New Tab settings such as
+`ntp.shortcust_visible` go through the live New Tab UI actions, Brave
+shortcuts go through its Settings `CommandsService`, and Vivaldi
+settings/shortcuts go through `vivaldi.prefs`. Vivaldi shortcut changes
+reload the internal Vivaldi UI page so the new accelerators are
+registered. If the browser already has a live endpoint, supported
+changes take effect with existing windows still open. If it was not
+already launched with an endpoint, dotbrowser asks it to close normally
+and relaunches it once because Chromium cannot add DevTools flags to an
 existing process.
+
+If plain Brave `apply` sees a changed setting that its running UI cannot
+apply live, it closes Brave normally, performs the verified offline
+apply, and relaunches it with a live endpoint. This fallback does not
+force-kill the browser and does not require `--kill-browser`. An
+explicit `--live-port` instead reports unsupported keys without closing
+that browser process.
 Live apply writes `.dotbrowser.live.json` so later `apply` runs can find
 the endpoint, and it still writes namespace sidecar files so the next
 apply knows what it manages. Removing/resetting `[settings]` keys is not
