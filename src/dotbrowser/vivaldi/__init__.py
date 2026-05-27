@@ -23,10 +23,12 @@ from dotbrowser._base.orchestrator import (
     cmd_apply as _base_cmd_apply,
     cmd_export as _base_cmd_export,
     cmd_init as _base_cmd_init,
+    cmd_launch as _base_cmd_launch,
     cmd_restore as _base_cmd_restore,
     register_browser,
 )
 from dotbrowser._base.utils import Plan
+from dotbrowser.vivaldi import live as live_mod
 from dotbrowser.vivaldi import pwa as pwa_mod
 from dotbrowser.vivaldi import settings as settings_mod
 from dotbrowser.vivaldi import shortcuts as shortcuts_mod
@@ -127,11 +129,23 @@ def cmd_apply(args: argparse.Namespace) -> None:
         kill_fn=kill_vivaldi_and_wait,
         restart_fn=restart_vivaldi,
         build_plans_fn=_build_plans,
+        live_apply_fn=live_mod.apply_live,
+        graceful_close_fn=BROWSER_PROCESS.close_and_wait,
+        launch_live_fn=BROWSER_PROCESS.launch_live,
     )
 
 
 def cmd_init(args: argparse.Namespace) -> None:
     _base_cmd_init(args, "vivaldi", _INIT_TEMPLATE)
+
+
+def cmd_launch(args: argparse.Namespace) -> None:
+    _base_cmd_launch(
+        args,
+        display_name="Vivaldi",
+        running_fn=vivaldi_running,
+        launch_fn=BROWSER_PROCESS.launch_live,
+    )
 
 
 def _export_shortcuts(args: argparse.Namespace, prefs_path: Path, prefs: dict) -> list[str]:
@@ -174,6 +188,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default_profile_root=DEFAULT_PROFILE_ROOT,
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,
+        cmd_launch_fn=cmd_launch,
         cmd_restore_fn=cmd_restore,
         cmd_export_fn=cmd_export,
         export_has_shortcuts=True,

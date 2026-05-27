@@ -30,8 +30,9 @@ dotbrowser chrome init -o chrome.toml
 uvx dotbrowser brave apply --dry-run \
   https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 
-# Apply (force-kills Brave + restarts)
-uvx dotbrowser brave apply -k \
+# Apply. If Brave is already running, dotbrowser uses live apply;
+# first-time live setup closes Brave normally and relaunches it once.
+uvx dotbrowser brave apply \
   https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 ```
 
@@ -40,7 +41,7 @@ Prefer to inspect / customise locally first? Download then apply:
 ```bash
 curl -fsSL -o brave.toml https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 # edit brave.toml ...
-uvx dotbrowser brave apply brave.toml -k
+uvx dotbrowser brave apply brave.toml
 ```
 
 The Vivaldi (`vivaldi/all.toml`), Edge (`edge/all.toml`), and Chrome (`chrome/all.toml`) variants follow the same shape. Anything you later remove from your config reverts to the browser's default on the next `apply` — no orphan entries.
@@ -93,10 +94,10 @@ urls = [
 
 ```bash
 dotbrowser brave   apply brave.toml --dry-run    # preview the diff
-dotbrowser brave   apply brave.toml -k           # apply, force-kill + restart Brave
-dotbrowser vivaldi apply vivaldi.toml -k         # same flags, different browser
-dotbrowser edge    apply edge.toml -k            # Edge: settings + pwa only
-dotbrowser chrome  apply chrome.toml -k          # Chrome: settings + pwa only
+dotbrowser brave   apply brave.toml              # live apply if Brave is running
+dotbrowser vivaldi apply vivaldi.toml            # live apply if Vivaldi is running
+dotbrowser edge    apply edge.toml               # close Edge first, or add -k
+dotbrowser chrome  apply chrome.toml             # close Chrome first, or add -k
 ```
 
 - **Shortcut keys (Brave)**: Chromium [KeyEvent codes](https://www.w3.org/TR/uievents-code/) joined by `+` — `Control+Shift+KeyP`, `Alt+Digit1`, `F11`. `Meta+` is auto-translated to `Command+` on macOS.
@@ -154,21 +155,47 @@ dotbrowser chrome  init -o chrome.toml
 
 ### `apply <config>` — write `[shortcuts]` + `[settings]` + `[pwa]`
 
-`<config>` is a local TOML file path **or** an `http://`/`https://` URL. URLs are fetched in-memory; the URL, byte size, and SHA-256 are printed before the diff so you can verify exactly what's about to be applied. If the config contains a non-empty `[pwa]` table, dotbrowser runs a privilege preflight (sudo on Linux/macOS, admin check on Windows) *before* killing the browser, so an auth failure cannot strand the user with a dead browser.
+`<config>` is a local TOML file path **or** an `http://`/`https://` URL. URLs are fetched in-memory; the URL, byte size, and SHA-256 are printed before the diff so you can verify exactly what's about to be applied. If the config contains a non-empty `[pwa]` table, dotbrowser runs a privilege preflight (sudo on Linux/macOS, admin check on Windows) *before* closing, relaunching, or killing the browser, so an auth failure cannot strand the user with a dead browser.
 
 | Flag | What it does |
 |---|---|
 | `-n, --dry-run` | Compute + print the diff. Do not back up, write, or touch state files. |
-| `-k, --kill-browser` | If the browser is running, force-kill it, apply, then restart via the OS-correct launcher (Linux wrapper script, `open -a "<App Name>"` on macOS, the standard `.exe` path on Windows). Without this flag, dotbrowser refuses to run while the browser is open. |
+| `-k, --kill-browser` | Force the old offline path: if the browser is running, force-kill it, patch `Preferences`, then restart. Normally you should not need this for Brave/Vivaldi. |
+| `--live-port PORT` | Advanced/debug: use an already-running Brave/Vivaldi DevTools endpoint on `127.0.0.1:PORT` instead of auto-detecting or auto-relaunching one. Mutually exclusive with `-k`. |
 
 ```bash
 dotbrowser brave   apply brave.toml --dry-run
-dotbrowser brave   apply brave.toml -k
-dotbrowser vivaldi apply vivaldi.toml -k
+dotbrowser brave   apply brave.toml
+dotbrowser vivaldi apply vivaldi.toml
 dotbrowser edge    apply edge.toml -k
 dotbrowser chrome  apply chrome.toml -k
 dotbrowser brave   apply -k https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
 ```
+
+For Brave and Vivaldi, plain `apply` is the normal no-force-kill path.
+If the browser is already running with dotbrowser's live endpoint,
+dotbrowser uses it. If the browser is running normally, dotbrowser first
+asks it to close normally, relaunches it once with a local live endpoint,
+remembers that endpoint in `.dotbrowser.live.json`, then applies through
+the running browser APIs. It does not use
+`taskkill /F`, `pkill -KILL`, or the `--kill-browser` path unless you
+explicitly pass `-k`.
+
+### `launch --live-port PORT [url]` — advanced live endpoint helper
+
+You do not need this for normal use. `launch` is kept for debugging and
+manual workflows where you want to start Brave/Vivaldi with a known live
+port before running `apply`.
+
+```bash
+dotbrowser brave   launch --live-port 9333
+dotbrowser vivaldi launch --live-port 9334 https://example.com/
+dotbrowser brave   apply brave.toml --live-port 9333
+```
+
+Treat a live port as local automation access to your browser. Use a
+high, private port, bind only to `127.0.0.1` (dotbrowser does this), and
+close the browser when you no longer need live apply.
 
 ### `shortcuts dump` — emit current shortcuts as TOML (Brave + Vivaldi)
 
@@ -192,6 +219,12 @@ Lists every command id you can bind to. The optional positional `filter` is a su
 dotbrowser brave   shortcuts list toggle    # everything containing "toggle"
 dotbrowser vivaldi shortcuts list           # full list
 ```
+
+For a fresh Vivaldi profile, `dotbrowser` reads the platform-specific
+`vivaldi.actions` defaults from Vivaldi's installed
+`prefs_definitions.json`, so `shortcuts list` and `apply` work before you
+have changed a keyboard shortcut in the UI. If that installed schema cannot
+be found, `apply` prints the manual Keyboard Settings seeding fallback.
 
 ### `settings dump [keys ...]` — inspect setting values
 
@@ -262,9 +295,29 @@ dotbrowser chrome  export -o chrome.toml        # [pwa] only
 
 ## How it works
 
-`dotbrowser` patches the profile `Preferences` JSON directly. It refuses to run while the browser is open (the browser overwrites the file on exit) — `-k` is the escape hatch: force-kill, apply, restart. Each apply takes one timestamped backup, writes atomically (temp file + rename), and verifies the result by reloading.
+When the target browser is closed, `dotbrowser` patches the profile
+`Preferences` JSON directly. Each offline apply takes one timestamped
+backup, writes atomically (temp file + rename), and verifies the result
+by reloading. Edge and Chrome still use this offline path; if they are
+running, close them first or pass `-k`.
 
-`[shortcuts]` and `[settings]` track managed entries per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores the browser's default on the next `apply`. `[pwa]` is different: its state lives in Chromium's managed-policy storage (Linux JSON file, macOS plist, Windows Registry) — the policy *is* the state, no sidecar. The browser reads the policy at startup, fetches each URL's manifest, downloads icons, and emits a launcher (`.desktop` file on Linux, app shim on macOS, Start Menu shortcut on Windows); removing a URL from `[pwa]` and re-applying triggers an uninstall on next launch — same TOML-is-source-of-truth round-trip as the other namespaces.
+For Brave and Vivaldi, plain `apply` uses the browser's own privileged
+UI APIs whenever the browser is running: Brave settings go through
+`chrome.settingsPrivate`, Brave shortcuts through its Settings
+`CommandsService`, and Vivaldi settings/shortcuts through
+`vivaldi.prefs`. Vivaldi shortcut changes reload the internal Vivaldi UI
+page so the new accelerators are registered. If the browser already has
+a live endpoint, existing windows stay open. If it was not already
+launched with an endpoint, dotbrowser asks it to close normally and
+relaunches it once because Chromium cannot add DevTools flags to an
+existing process.
+Live apply writes `.dotbrowser.live.json` so later `apply` runs can find
+the endpoint, and it still writes namespace sidecar files so the next
+apply knows what it manages. Removing/resetting `[settings]` keys is not
+live-resettable yet; close the browser and use offline apply or `-k` for
+that case.
+
+`[shortcuts]` and `[settings]` track managed entries per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores the browser's default on the next offline `apply`. `[pwa]` is different: its state lives in Chromium's managed-policy storage (Linux JSON file, macOS plist, Windows Registry) — the policy *is* the state, no sidecar. Chromium marks the PWA force-install policy as dynamically refreshable, but Windows still requires Administrator to write `HKLM`. Removing a URL from `[pwa]` and re-applying triggers an uninstall through the same policy mechanism.
 
 ### Architecture
 

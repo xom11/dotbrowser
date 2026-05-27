@@ -203,6 +203,48 @@ class BrowserProcess:
             f"force-kill + {timeout}s wait"
         )
 
+    def close_and_wait(self, timeout: float = 15.0) -> None:
+        if _is_windows():
+            subprocess.run(
+                ["taskkill", "/IM", self.proc_name()],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif _is_macos():
+            subprocess.run(
+                [
+                    "osascript",
+                    "-e",
+                    f'tell application "{self.macos_app_name}" to quit',
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif self.linux_pid_filter is not None:
+            scoped = self.pids()
+            if scoped:
+                subprocess.run(
+                    ["kill", "-TERM", *scoped],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        else:
+            subprocess.run(
+                ["pkill", "-TERM", "-x", self.proc_name()],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.running():
+                return
+            time.sleep(0.1)
+        sys.exit(
+            f"error: {self.display_name} is still running after a normal "
+            f"close request. Close it manually, or pass --kill-browser to "
+            f"force the old apply path."
+        )
+
     def _is_flatpak_cmdline(self, captured_cmdline: list[str]) -> bool:
         if self.flatpak_prefix is None:
             return False
@@ -238,6 +280,61 @@ class BrowserProcess:
                 cmdline = [wrapper, *captured_cmdline[1:]]
             else:
                 cmdline = list(captured_cmdline)
+        subprocess.Popen(
+            cmdline,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return cmdline
+
+    def live_launch_cmdline(
+        self,
+        profile_root: Path,
+        profile: str,
+        port: int,
+        url: str | None = None,
+    ) -> list[str]:
+        flags = [
+            f"--user-data-dir={profile_root}",
+            f"--profile-directory={profile}",
+            "--remote-debugging-address=127.0.0.1",
+            f"--remote-debugging-port={port}",
+        ]
+        if _is_windows():
+            local = os.environ.get("LOCALAPPDATA", "")
+            known_exe = Path(local).joinpath(*self.windows_exe_relpath)
+            if local and known_exe.exists():
+                cmdline = [str(known_exe), *flags]
+            else:
+                found = shutil.which(self.proc_name())
+                if found is None:
+                    raise FileNotFoundError(self.proc_name())
+                cmdline = [found, *flags]
+        elif _is_macos():
+            cmdline = ["open", "-a", self.macos_app_name, "--args", *flags]
+        else:
+            wrapper = None
+            for w in self.linux_wrappers:
+                wrapper = shutil.which(w)
+                if wrapper:
+                    break
+            if wrapper is None:
+                raise FileNotFoundError(self.linux_wrappers[0])
+            cmdline = [wrapper, *flags]
+        if url:
+            cmdline.append(url)
+        return cmdline
+
+    def launch_live(
+        self,
+        profile_root: Path,
+        profile: str,
+        port: int,
+        url: str | None = None,
+    ) -> list[str]:
+        cmdline = self.live_launch_cmdline(profile_root, profile, port, url)
         subprocess.Popen(
             cmdline,
             stdin=subprocess.DEVNULL,

@@ -28,6 +28,7 @@ import pytest
 
 from dotbrowser import vivaldi as vivaldi_pkg
 from dotbrowser.vivaldi import pwa as pwa_mod
+from dotbrowser.vivaldi import schema as vivaldi_schema
 from dotbrowser.vivaldi import shortcuts as shortcuts_mod
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -154,35 +155,91 @@ def _make_uninitialized_profile_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_apply_uninitialized_profile_emits_seeding_hint(tmp_path: Path) -> None:
-    """The seeding hint must reach the user via the CLI (not just the
-    pure-logic path) and Preferences must remain untouched.
-    """
-    profile_root = _make_uninitialized_profile_root(tmp_path)
-    cfg = tmp_path / "v.toml"
-    cfg.write_text('[shortcuts]\nCOMMAND_CLOSE_TAB = ["meta+w"]\n')
+def _write_actions_schema(tmp_path: Path) -> Path:
+    defaults = {
+        "COMMAND_CLOSE_TAB": {
+            "shortcuts": ["ctrl+w"],
+            "gestures": ["20"],
+        },
+        "COMMAND_NEW_TAB": {
+            "shortcuts": ["ctrl+t"],
+            "gestures": ["2"],
+        },
+    }
+    path = tmp_path / "prefs_definitions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "vivaldi": {
+                    "actions": {
+                        "type": "list",
+                        "default": [defaults],
+                        "default_linux": [defaults],
+                        "default_mac": [defaults],
+                    }
+                }
+            }
+        )
+    )
+    return path
 
-    before = (profile_root / "Default" / "Preferences").read_bytes()
+
+def test_apply_uninitialized_profile_bootstraps_from_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fresh-profile apply materializes defaults, overrides, then restores."""
+    profile_root = _make_uninitialized_profile_root(tmp_path)
+    schema_path = _write_actions_schema(tmp_path)
+    monkeypatch.setenv("DOTBROWSER_VIVALDI_PREFS_DEF", str(schema_path))
+    monkeypatch.setattr(vivaldi_pkg, "vivaldi_running", lambda: False)
+    vivaldi_schema.load_schema.cache_clear()
+    cfg = tmp_path / "v.toml"
+    cfg.write_text('[shortcuts]\nCOMMAND_CLOSE_TAB = ["alt+x"]\n')
+
+    try:
+        _apply(profile_root, cfg)
+        actions = _actions(profile_root)
+        assert actions["COMMAND_CLOSE_TAB"]["shortcuts"] == ["alt+x"]
+        assert actions["COMMAND_CLOSE_TAB"]["gestures"] == ["20"]
+        assert actions["COMMAND_NEW_TAB"]["shortcuts"] == ["ctrl+t"]
+
+        cfg.write_text("[shortcuts]\n")
+        _apply(profile_root, cfg)
+        actions = _actions(profile_root)
+        assert actions["COMMAND_CLOSE_TAB"]["shortcuts"] == ["ctrl+w"]
+        assert actions["COMMAND_CLOSE_TAB"]["gestures"] == ["20"]
+    finally:
+        vivaldi_schema.load_schema.cache_clear()
+
+
+def test_apply_uninitialized_profile_without_schema_shows_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If installed defaults cannot be loaded, retain the manual fallback."""
+    profile_root = _make_uninitialized_profile_root(tmp_path)
+    monkeypatch.setenv(
+        "DOTBROWSER_VIVALDI_PREFS_DEF", str(tmp_path / "missing-schema.json")
+    )
+    cfg = tmp_path / "v.toml"
+    cfg.write_text('[shortcuts]\nCOMMAND_CLOSE_TAB = ["ctrl+w"]\n')
+
     r = _run_cli(profile_root, "apply", str(cfg))
     assert r.returncode != 0
-    combined = r.stdout + r.stderr
-    assert "has not seeded" in combined
-    # The misleading typo-flavored hint must NOT be the one shown here.
-    assert "unknown Vivaldi command" not in combined
-    after = (profile_root / "Default" / "Preferences").read_bytes()
-    assert before == after
+    assert "has not seeded" in (r.stdout + r.stderr)
 
 
-def test_list_on_uninitialized_profile_shows_hint(tmp_path: Path) -> None:
-    """`shortcuts list` against an unseeded profile prints `0 commands`
-    plus the seeding hint, so users running it to diagnose the apply
-    failure get the same actionable advice.
-    """
+def test_list_on_uninitialized_profile_uses_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`shortcuts list` discovers installed defaults before first UI save."""
     profile_root = _make_uninitialized_profile_root(tmp_path)
-    r = _run_cli(profile_root, "shortcuts", "list")
+    schema_path = _write_actions_schema(tmp_path)
+    monkeypatch.setenv("DOTBROWSER_VIVALDI_PREFS_DEF", str(schema_path))
+    r = _run_cli(profile_root, "shortcuts", "list", "close")
     assert r.returncode == 0
-    assert "0 commands" in r.stderr
-    assert "has not seeded" in r.stderr
+    assert "COMMAND_CLOSE_TAB" in r.stdout
+    assert "1 commands" in r.stderr
+    assert "has not seeded" not in r.stderr
 
 
 def test_dump_against_fake_profile(fake_vivaldi_profile_root: Path) -> None:

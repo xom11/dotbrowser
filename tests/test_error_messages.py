@@ -11,6 +11,7 @@ All tests are pure-logic and run offline -- no Brave install required.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,9 @@ def _make_args(profile_root: Path, config: Path) -> argparse.Namespace:
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Linux/macOS-only path; Windows uses IsUserAnAdmin"
+)
 def test_sudo_preflight_handles_missing_sudo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -81,9 +85,6 @@ def test_sudo_preflight_handles_missing_sudo(
     raises FileNotFoundError. The orchestrator must surface a clean
     error, not a traceback.
     """
-    if Path("/").drive:
-        pytest.skip("Linux/macOS-only path; Windows uses IsUserAnAdmin")
-
     profile = tmp_path / "Default"
     profile.mkdir()
     (profile / "Preferences").write_text("{}")
@@ -111,6 +112,9 @@ def test_sudo_preflight_handles_missing_sudo(
         )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Linux/macOS-only path; Windows uses IsUserAnAdmin"
+)
 def test_sudo_preflight_handles_calledprocesserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

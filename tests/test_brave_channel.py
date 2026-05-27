@@ -28,6 +28,18 @@ def _run_cli(*args: str, env_overrides: dict | None = None) -> subprocess.Comple
     )
 
 
+def _isolated_home_env(tmp_path: Path) -> dict[str, str]:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    fake_local = tmp_path / "local"
+    fake_local.mkdir()
+    return {
+        "HOME": str(fake_home),
+        "USERPROFILE": str(fake_home),
+        "LOCALAPPDATA": str(fake_local),
+    }
+
+
 def test_channel_flag_appears_in_help() -> None:
     r = _run_cli("brave", "--help")
     assert r.returncode == 0, r.stderr
@@ -47,9 +59,7 @@ def test_channel_beta_resolves_default_profile_root(tmp_path: Path) -> None:
     """Without --profile-root, --channel beta must auto-resolve to the
     Brave-Browser-Beta directory and surface its absence as a
     'Preferences not found' error pointing into that directory."""
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    env = {"HOME": str(fake_home)}
+    env = _isolated_home_env(tmp_path)
     r = _run_cli("brave", "--channel", "beta", "settings", "blocked", env_overrides=env)
     assert r.returncode != 0, r.stdout
     msg = r.stdout + r.stderr
@@ -59,9 +69,7 @@ def test_channel_beta_resolves_default_profile_root(tmp_path: Path) -> None:
 
 def test_channel_default_is_stable(tmp_path: Path) -> None:
     """Omitting --channel must resolve to the stable profile path."""
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    env = {"HOME": str(fake_home)}
+    env = _isolated_home_env(tmp_path)
     r = _run_cli("brave", "settings", "blocked", env_overrides=env)
     assert r.returncode != 0
     msg = r.stdout + r.stderr

@@ -14,6 +14,7 @@ import pytest
 
 from dotbrowser.vivaldi import shortcuts as sc
 from dotbrowser.vivaldi import pwa
+from dotbrowser.vivaldi import schema as vivaldi_schema
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,51 @@ def _make_prefs(actions_inner: dict | None = None) -> dict:
             "actions": [actions_inner if actions_inner is not None else {}]
         }
     }
+
+
+@pytest.fixture
+def fake_actions_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Install platform-neutral action defaults for bootstrap tests."""
+    defaults = {
+        "COMMAND_CLOSE_TAB": {
+            "shortcuts": ["ctrl+w"],
+            "gestures": ["20"],
+        },
+        "COMMAND_NEW_TAB": {
+            "shortcuts": ["ctrl+t"],
+            "gestures": ["2"],
+        },
+    }
+    path = tmp_path / "prefs_definitions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "vivaldi": {
+                    "actions": {
+                        "type": "list",
+                        "default": [defaults],
+                        "default_linux": [defaults],
+                        "default_mac": [defaults],
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("DOTBROWSER_VIVALDI_PREFS_DEF", str(path))
+    vivaldi_schema.load_schema.cache_clear()
+    yield defaults
+    vivaldi_schema.load_schema.cache_clear()
+
+
+@pytest.fixture
+def no_actions_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force shortcut bootstrap to have no installed defaults source."""
+    monkeypatch.setenv(
+        "DOTBROWSER_VIVALDI_PREFS_DEF", str(tmp_path / "does-not-exist.json")
+    )
+    vivaldi_schema.load_schema.cache_clear()
+    yield
+    vivaldi_schema.load_schema.cache_clear()
 
 
 def test_plan_apply_overrides_and_preserves_gestures(tmp_path: Path) -> None:
@@ -167,24 +213,28 @@ def test_plan_apply_rejects_unknown_command(tmp_path: Path) -> None:
         sc.plan_apply(prefs_path, prefs, {"COMMAND_NOT_REAL": ["x"]})
 
 
-def test_plan_apply_uninitialized_profile_distinct_error(tmp_path: Path) -> None:
-    """A fresh Vivaldi profile that hasn't visited Settings -> Keyboard
-    has an empty (or missing) `vivaldi.actions[0]`. Against that, every
-    standard COMMAND_* would otherwise be reported as unknown — pointing
-    the user toward `shortcuts list`, which is also empty. Detect this
-    case explicitly and emit the seeding hint instead.
-    """
+def test_plan_apply_uninitialized_profile_bootstraps_defaults(
+    fake_actions_schema: dict, tmp_path: Path
+) -> None:
+    """A fresh profile uses installed action defaults without UI seeding."""
     prefs_path = tmp_path / "Preferences"
-    prefs = _make_prefs({})  # actions[0] = {}, the uninitialized shape
-    with pytest.raises(SystemExit, match="has not seeded"):
-        sc.plan_apply(prefs_path, prefs, {"COMMAND_CLOSE_TAB": ["meta+w"]})
+    prefs: dict = {"vivaldi": {}}
+    plan = sc.plan_apply(prefs_path, prefs, {"COMMAND_CLOSE_TAB": ["alt+x"]})
+
+    assert plan.state_payload == {
+        "originals": {"COMMAND_CLOSE_TAB": ["ctrl+w"]}
+    }
+    plan.apply_fn(prefs)
+    actions = prefs["vivaldi"]["actions"][0]
+    assert actions["COMMAND_CLOSE_TAB"]["shortcuts"] == ["alt+x"]
+    assert actions["COMMAND_CLOSE_TAB"]["gestures"] == ["20"]
+    assert actions["COMMAND_NEW_TAB"]["shortcuts"] == ["ctrl+t"]
 
 
-def test_plan_apply_missing_actions_key_distinct_error(tmp_path: Path) -> None:
-    """Same as above but the `vivaldi.actions` key is absent entirely
-    (observed on freshly-installed Linux profiles). The seeding hint
-    must fire here too — not the unknown-command branch.
-    """
+def test_plan_apply_uninitialized_profile_without_schema_emits_hint(
+    no_actions_schema: None, tmp_path: Path
+) -> None:
+    """No schema means dotbrowser cannot safely invent Vivaldi defaults."""
     prefs_path = tmp_path / "Preferences"
     prefs: dict = {"vivaldi": {}}
     with pytest.raises(SystemExit, match="has not seeded"):

@@ -13,13 +13,12 @@ Differences from `brave/shortcuts.py`:
    is no equivalent of `brave/command_ids.py`. Names round-trip exactly
    (`COMMAND_CLOSE_TAB` → `COMMAND_CLOSE_TAB`), no resolution step.
 
-2. Vivaldi keeps NO `default_actions` mirror. To support reset-on-removal,
-   we capture each command's *original* shortcuts list in the state
-   sidecar the first time we manage it; the next apply that drops the
-   command from the config restores that snapshot. This is the load-
-   bearing trick — without it, removing a key from the config would
-   leave whatever override we last wrote in place, breaking the
-   "TOML is source of truth" invariant.
+2. Vivaldi keeps NO `default_actions` mirror in `Preferences`. To support
+   reset-on-removal, we capture each command's *original* shortcuts list
+   in the state sidecar the first time we manage it; the next apply that
+   drops the command from the config restores that snapshot. For a fresh
+   profile whose actions have not been materialized yet, the original
+   map comes from Vivaldi's installed `prefs_definitions.json` schema.
 
 3. The accelerator value format is lowercase and tokenized with `+`
    (e.g. `meta+shift+t`). Vivaldi already serializes the same `meta+`
@@ -36,11 +35,13 @@ This module exposes:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
+from dotbrowser.vivaldi import schema as _schema
 from dotbrowser.vivaldi.utils import (
     Plan,
     find_preferences,
@@ -50,18 +51,18 @@ from dotbrowser.vivaldi.utils import (
 ACTIONS_KEY_PATH = ("vivaldi", "actions")
 NAMESPACE = "shortcuts"
 
-# Shown when `vivaldi.actions[0]` is empty / missing. Vivaldi only writes
-# the compiled-in command catalog into Preferences after the user touches
-# Settings -> Keyboard and the browser flushes on a clean quit. Without
-# this hint, the user sees "unknown command" for every standard COMMAND_*
-# (or "0 commands" from `shortcuts list`) with no path to the fix.
+# Shown only when both the profile action map and Vivaldi's installed
+# defaults schema are unavailable. Normally a fresh profile is bootstrapped
+# directly from prefs_definitions.json and never reaches this fallback.
 _UNINITIALIZED_HINT = (
     "this Vivaldi profile has not seeded its keyboard command catalog yet "
-    "(`vivaldi.actions[0]` in Preferences is empty or missing). Vivaldi "
-    "writes the catalog only after Settings -> Keyboard has been touched "
-    "and the browser has been fully quit (not just window-closed). "
+    "(`vivaldi.actions[0]` in Preferences is empty or missing), and "
+    "dotbrowser could not load installed defaults from "
+    "`prefs_definitions.json`. Vivaldi writes the catalog after Settings "
+    "-> Keyboard has been touched and the browser has been fully quit. "
     "Open Vivaldi, change or reset any shortcut under Settings -> Keyboard, "
-    "quit the browser entirely so it flushes Preferences, then re-run."
+    "quit the browser entirely so it flushes Preferences, then re-run; "
+    "or set DOTBROWSER_VIVALDI_PREFS_DEF to the installed schema path."
 )
 
 
@@ -100,6 +101,56 @@ def _get_actions_dict(prefs: dict) -> dict[str, dict[str, Any]]:
         inner = {}
         actions[0] = inner
     return inner
+
+
+def _read_actions_dict(prefs: dict) -> dict[str, dict[str, Any]]:
+    """Read `vivaldi.actions[0]` without materializing missing preferences."""
+    vivaldi = prefs.get("vivaldi")
+    if not isinstance(vivaldi, dict):
+        return {}
+    actions = vivaldi.get("actions")
+    if not isinstance(actions, list) or not actions:
+        return {}
+    inner = actions[0]
+    return inner if isinstance(inner, dict) else {}
+
+
+def _installed_default_actions() -> dict[str, dict[str, Any]] | None:
+    """Return Vivaldi's platform-specific factory action map, if available."""
+    defn = _schema.lookup(_schema.load_schema(), "vivaldi.actions")
+    if not isinstance(defn, dict):
+        return None
+
+    if sys.platform == "darwin":
+        default_key = "default_mac"
+    elif sys.platform.startswith("linux"):
+        default_key = "default_linux"
+    else:
+        default_key = "default"
+
+    sections = defn.get(default_key)
+    if (
+        not isinstance(sections, list)
+        or not sections
+        or not isinstance(sections[0], dict)
+    ):
+        return None
+    actions = sections[0]
+    if not all(
+        isinstance(name, str) and isinstance(entry, dict)
+        for name, entry in actions.items()
+    ):
+        return None
+    return copy.deepcopy(actions)
+
+
+def _materialize_actions(prefs: dict, actions: dict[str, dict[str, Any]]) -> None:
+    """Write a complete action baseline into a profile being bootstrapped."""
+    vivaldi = prefs.setdefault("vivaldi", {})
+    if not isinstance(vivaldi, dict):
+        vivaldi = {}
+        prefs["vivaldi"] = vivaldi
+    vivaldi["actions"] = [copy.deepcopy(actions)]
 
 
 def _state_file(prefs_path: Path) -> Path:
@@ -148,21 +199,20 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     Does not write anything — the caller (unified runner) handles
     backups, kill-browser, write_atomic, state-file write, and verify.
 
-    Reject unknown commands with a clear error rather than silently
-    writing them: Vivaldi seeds the full known-command list on first
-    launch, so a command that isn't in `vivaldi.actions[0]` is almost
-    always a typo, and silently writing it would create a dead entry
-    that the user can't see in Vivaldi's settings UI.
+    Reject unknown commands with a clear error rather than silently writing
+    them. For a profile that has not written `vivaldi.actions` yet, load the
+    installed platform-specific defaults as the authoritative catalog and
+    materialize that baseline only when the plan is actually applied.
     """
     config = _validate_table(raw_table)
-    current = _get_actions_dict(prefs)
+    current = _read_actions_dict(prefs)
+    bootstrap_actions: dict[str, dict[str, Any]] | None = None
 
-    # Distinguish "uninitialized profile" from "user typo" before the
-    # generic unknown-command check: against an empty catalog every name
-    # would be reported unknown, and the typo-flavored hint pointing to
-    # `shortcuts list` is a dead end (it would also print 0 commands).
     if config and not current:
-        sys.exit("error: " + _UNINITIALIZED_HINT)
+        bootstrap_actions = _installed_default_actions()
+        if bootstrap_actions is None:
+            sys.exit("error: " + _UNINITIALIZED_HINT)
+        current = bootstrap_actions
 
     unknown = sorted(name for name in config if name not in current)
     if unknown:
@@ -194,6 +244,8 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     diff = diff_summary(current, config, removed_with_original)
 
     def apply_fn(prefs: dict) -> None:
+        if bootstrap_actions is not None and not _read_actions_dict(prefs):
+            _materialize_actions(prefs, bootstrap_actions)
         actions = _get_actions_dict(prefs)
         for name, keys in config.items():
             entry = actions.get(name)
@@ -253,7 +305,7 @@ def build_dump_block(
     The export command documents this limitation in its top-of-file
     comment.
     """
-    actions = _get_actions_dict(prefs)
+    actions = _read_actions_dict(prefs)
     lines: list[str] = []
     if header_comment is not None:
         lines.append(header_comment)
@@ -289,23 +341,21 @@ def cmd_dump(args: argparse.Namespace) -> None:
 def cmd_list(args: argparse.Namespace) -> None:
     """List COMMAND_* names known to *this* profile.
 
-    Vivaldi seeds `vivaldi.actions[0]` with its full compiled-in command
-    list on first launch, so reading from the user's own profile is the
-    most accurate source — it'll always match what the user's installed
-    Vivaldi version actually understands. No bundled mapping needed.
+    Prefer the user's persisted `vivaldi.actions[0]`; before Vivaldi has
+    materialized that preference, fall back to factory actions from the
+    installed prefs schema for the same browser version.
     """
     prefs_path = find_preferences(args.profile_root, args.profile)
     prefs = load_prefs(prefs_path)
-    actions = _get_actions_dict(prefs)
+    actions = _read_actions_dict(prefs)
+    if not actions:
+        actions = _installed_default_actions() or {}
 
     needle = (args.filter or "").lower()
     rows = sorted(name for name in actions if needle in name.lower())
     for name in rows:
         print(name)
     print(f"\n{len(rows)} commands", file=sys.stderr)
-    # Empty catalog is almost always an uninitialized profile, not a
-    # too-narrow filter. Surface the same hint `apply` uses so users
-    # who run `list` to diagnose land on the answer.
     if not actions:
         print(_UNINITIALIZED_HINT, file=sys.stderr)
 

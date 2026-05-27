@@ -27,6 +27,12 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from dotbrowser._base.cdp import (
+    find_devtools_port,
+    pick_unused_port,
+    remember_devtools_port,
+    wait_for_devtools_endpoint,
+)
 from dotbrowser._base.utils import Plan, find_preferences, load_prefs, write_atomic
 
 
@@ -117,6 +123,9 @@ def cmd_apply(
     kill_fn: Callable[[], None],
     restart_fn: Callable[[list[str]], list[str]],
     build_plans_fn: Callable,
+    live_apply_fn: Callable[[int, Path, dict, list], None] | None = None,
+    graceful_close_fn: Callable[[], None] | None = None,
+    launch_live_fn: Callable[[Path, str, int, str | None], list[str]] | None = None,
 ) -> None:
     """Unified apply orchestrator.
 
@@ -124,6 +133,9 @@ def cmd_apply(
     ``cmd_apply`` wrapper, so test monkeypatching of the browser
     module's function names takes effect.
     """
+    live_port = getattr(args, "live_port", None)
+    if live_port is not None and getattr(args, "kill_browser", False):
+        sys.exit("error: --live-port cannot be used with --kill-browser")
     prefs_path = find_preferences(args.profile_root, args.profile)
     doc = load_toml_source(
         args.config,
@@ -191,6 +203,32 @@ def cmd_apply(
     saved_cmdline: list[str] | None = None
     was_killed = False
     if running_fn():
+        if live_apply_fn is not None and not args.kill_browser:
+            if live_port is None:
+                live_port = find_devtools_port(args.profile_root, args.profile)
+            if live_port is None:
+                if graceful_close_fn is None or launch_live_fn is None:
+                    sys.exit(
+                        f"error: {display_name} is running but cannot be "
+                        f"re-launched for live apply"
+                    )
+                live_port = pick_unused_port()
+                print(
+                    f"{display_name} is running without a live endpoint; "
+                    f"closing it normally and relaunching once for live apply "
+                    f"(no force-kill)."
+                )
+                graceful_close_fn()
+                used = launch_live_fn(args.profile_root, args.profile, live_port, None)
+                print(
+                    f"relaunching {display_name} with live endpoint: "
+                    f"{' '.join(map(str, used))}"
+                )
+                wait_for_devtools_endpoint(live_port, display_name)
+            live_port = int(live_port)
+            live_apply_fn(live_port, prefs_path, prefs, plans)
+            remember_devtools_port(args.profile_root, args.profile, live_port)
+            return
         if not args.kill_browser:
             sys.exit(
                 f"error: {display_name} is running. Close it first, "
@@ -431,6 +469,38 @@ def cmd_init(args: argparse.Namespace, browser_name: str, template: str) -> None
         sys.stdout.write(text)
 
 
+def cmd_launch(
+    args: argparse.Namespace,
+    *,
+    display_name: str,
+    running_fn: Callable[[], bool],
+    launch_fn: Callable[[Path, str, int, str | None], list[str]],
+) -> None:
+    if args.live_port <= 0:
+        sys.exit("error: --live-port must be a positive integer")
+    if running_fn():
+        sys.exit(
+            f"error: {display_name} is already running. Close it before "
+            f"`dotbrowser {display_name.lower()} launch`; DevTools flags "
+            f"cannot be added to an existing process without restart."
+        )
+    if getattr(args, "dry_run", False):
+        print(
+            f"would launch {display_name} with DevTools on "
+            f"127.0.0.1:{args.live_port}"
+        )
+        return
+    try:
+        cmdline = launch_fn(args.profile_root, args.profile, args.live_port, args.url)
+    except FileNotFoundError as e:
+        sys.exit(f"error: could not find {display_name} launcher: {e}")
+    remember_devtools_port(args.profile_root, args.profile, args.live_port)
+    print(
+        f"launching {display_name} with DevTools on "
+        f"127.0.0.1:{args.live_port}: {' '.join(map(str, cmdline))}"
+    )
+
+
 def register_browser(
     subparsers: argparse._SubParsersAction,
     *,
@@ -439,6 +509,7 @@ def register_browser(
     default_profile_root: Path | None,
     cmd_apply_fn,
     cmd_init_fn=None,
+    cmd_launch_fn=None,
     cmd_restore_fn=None,
     cmd_export_fn=None,
     export_has_shortcuts: bool = False,
@@ -502,6 +573,22 @@ def register_browser(
         )
         i.set_defaults(func=cmd_init_fn)
 
+    if cmd_launch_fn is not None:
+        l = sub.add_parser(
+            "launch",
+            help="advanced: start the browser with a local DevTools endpoint",
+        )
+        l.add_argument(
+            "--live-port",
+            type=int,
+            required=True,
+            metavar="PORT",
+            help="bind DevTools to 127.0.0.1:PORT; normal apply auto-manages this",
+        )
+        l.add_argument("-n", "--dry-run", action="store_true")
+        l.add_argument("url", nargs="?", default=None, help="optional URL to open")
+        l.set_defaults(func=cmd_launch_fn)
+
     a = sub.add_parser(
         "apply",
         help="apply [shortcuts], [settings] and [pwa] tables from a TOML config",
@@ -530,8 +617,16 @@ def register_browser(
         "-k",
         "--kill-browser",
         action="store_true",
-        help=f"if {name} is running, force-kill it (so it can't flush in-memory "
-        "prefs over our changes), apply, then restart it",
+        help=f"force the old offline path: if {name} is running, force-kill it, "
+        "apply, then restart it",
+    )
+    a.add_argument(
+        "--live-port",
+        type=int,
+        metavar="PORT",
+        default=None,
+        help=f"advanced/debug: use an existing {name} DevTools endpoint on "
+        "127.0.0.1:PORT instead of auto-detecting or auto-relaunching one",
     )
     a.set_defaults(func=cmd_apply_fn)
 
