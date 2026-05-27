@@ -34,8 +34,8 @@ Command shape:
 Capability overview:
   Brave          [shortcuts] [settings] [pwa]  live apply; stable/beta/nightly
   Vivaldi        [shortcuts] [settings] [pwa]  live apply; settings schema search
-  Microsoft Edge [settings] [pwa]              offline apply only
-  Google Chrome  [settings] [pwa]              offline apply only
+  Microsoft Edge [settings] [pwa]              automatic live/fallback apply
+  Google Chrome  [settings] [pwa]              automatic live/fallback apply
 
 `[settings]` writes unprotected Preferences keys. `[pwa]` manages
 force-installed web apps through browser policy. Brave and Vivaldi also

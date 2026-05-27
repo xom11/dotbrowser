@@ -512,50 +512,16 @@ def cmd_init(args: argparse.Namespace, browser_name: str, template: str) -> None
         sys.stdout.write(text)
 
 
-def cmd_launch(
-    args: argparse.Namespace,
-    *,
-    display_name: str,
-    running_fn: Callable[[], bool],
-    launch_fn: Callable[[Path, str, int, str | None], list[str]],
-) -> None:
-    if args.live_port <= 0:
-        sys.exit("error: --live-port must be a positive integer")
-    if running_fn():
-        sys.exit(
-            f"error: {display_name} is already running. Close it before "
-            f"`dotbrowser {display_name.lower()} launch`; DevTools flags "
-            f"cannot be added to an existing process without restart."
-        )
-    if getattr(args, "dry_run", False):
-        print(
-            f"would launch {display_name} with DevTools on "
-            f"127.0.0.1:{args.live_port}"
-        )
-        return
-    try:
-        cmdline = launch_fn(args.profile_root, args.profile, args.live_port, args.url)
-    except FileNotFoundError as e:
-        sys.exit(f"error: could not find {display_name} launcher: {e}")
-    remember_devtools_port(args.profile_root, args.profile, args.live_port)
-    print(
-        f"launching {display_name} with DevTools on "
-        f"127.0.0.1:{args.live_port}: {' '.join(map(str, cmdline))}"
-    )
-
-
 def register_browser(
     subparsers: argparse._SubParsersAction,
     *,
     name: str,
     help_text: str,
     namespaces: tuple[str, ...],
-    supports_live_apply: bool = False,
     browser_notes: str | None = None,
     default_profile_root: Path | None,
     cmd_apply_fn,
     cmd_init_fn=None,
-    cmd_launch_fn=None,
     cmd_restore_fn=None,
     cmd_export_fn=None,
     export_has_shortcuts: bool = False,
@@ -572,16 +538,10 @@ def register_browser(
     """
     display_name = help_text.removesuffix(" browser commands")
     table_list = " ".join(f"[{namespace}]" for namespace in namespaces)
-    if supports_live_apply:
-        execution_text = (
-            "Live apply is available when the browser is running; plain `apply`\n"
-            "creates or reuses a local DevTools endpoint as needed."
-        )
-    else:
-        execution_text = (
-            "Offline apply only: close the browser before writing, or use\n"
-            "`--kill-browser` to force-close and restart it."
-        )
+    execution_text = (
+        "Live apply is attempted when the browser is running; plain `apply`\n"
+        "manages a local endpoint and normal-close fallback automatically."
+    )
     apply_execution_text = execution_text.replace("\n", "\n  ")
     notes = f"\n\nBrowser notes:\n{browser_notes}" if browser_notes else ""
     p = subparsers.add_parser(
@@ -664,34 +624,6 @@ Examples:
         )
         i.set_defaults(func=cmd_init_fn)
 
-    if cmd_launch_fn is not None:
-        l = sub.add_parser(
-            "launch",
-            help="advanced: start the browser with a local DevTools endpoint",
-            formatter_class=_HELP_FORMATTER,
-            description=f"""\
-Start {display_name} with a private local DevTools endpoint for live apply.
-
-This advanced helper is unnecessary for normal use: plain `apply` can
-relaunch a running browser once and remember its endpoint. The port binds
-only to 127.0.0.1, but it still grants local browser automation access.""",
-            epilog=f"""\
-Examples:
-  dotbrowser {name} launch --live-port 9333
-  dotbrowser {name} launch --live-port 9333 https://example.com/
-  dotbrowser {name} apply --live-port 9333 {name}.toml""",
-        )
-        l.add_argument(
-            "--live-port",
-            type=int,
-            required=True,
-            metavar="PORT",
-            help="bind DevTools to 127.0.0.1:PORT; normal apply auto-manages this",
-        )
-        l.add_argument("-n", "--dry-run", action="store_true")
-        l.add_argument("url", nargs="?", default=None, help="optional URL to open")
-        l.set_defaults(func=cmd_launch_fn)
-
     a = sub.add_parser(
         "apply",
         help=f"apply {table_list} tables from a TOML config",
@@ -742,26 +674,6 @@ Examples:
         "would run through sudo)",
     )
     a.add_argument("-n", "--dry-run", action="store_true")
-    a.add_argument(
-        "-k",
-        "--kill-browser",
-        action="store_true",
-        help=(
-            f"force offline apply: if {name} is running, force-kill it, "
-            "apply, then restart it"
-            if supports_live_apply
-            else f"if {name} is running, force-kill it, apply, then restart it"
-        ),
-    )
-    if supports_live_apply:
-        a.add_argument(
-            "--live-port",
-            type=int,
-            metavar="PORT",
-            default=None,
-            help=f"advanced/debug: use an existing {name} DevTools endpoint on "
-            "127.0.0.1:PORT instead of auto-detecting or auto-relaunching one",
-        )
     a.set_defaults(func=cmd_apply_fn)
 
     if cmd_export_fn is not None:
@@ -846,12 +758,6 @@ Examples:
             help="list available backups and exit",
         )
         r.add_argument("-n", "--dry-run", action="store_true")
-        r.add_argument(
-            "-k",
-            "--kill-browser",
-            action="store_true",
-            help=f"if {name} is running, force-kill it before restoring",
-        )
         r.set_defaults(func=cmd_restore_fn)
 
     for mod_register in module_registers:

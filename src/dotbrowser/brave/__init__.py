@@ -23,7 +23,6 @@ from dotbrowser._base.orchestrator import (
     cmd_apply as _base_cmd_apply,
     cmd_export as _base_cmd_export,
     cmd_init as _base_cmd_init,
-    cmd_launch as _base_cmd_launch,
     cmd_restore as _base_cmd_restore,
     register_browser,
 )
@@ -267,27 +266,6 @@ def cmd_init(args: argparse.Namespace) -> None:
     _base_cmd_init(args, "brave", _INIT_TEMPLATE)
 
 
-def cmd_launch(args: argparse.Namespace) -> None:
-    channel = getattr(args, "channel", "stable")
-    if channel == "stable":
-        _base_cmd_launch(
-            args,
-            display_name="Brave",
-            running_fn=brave_running,
-            launch_fn=BROWSER_PROCESS.launch_live,
-        )
-        return
-
-    from dotbrowser.brave.utils import _make_browser_process
-    proc = _make_browser_process(channel)
-    _base_cmd_launch(
-        args,
-        display_name=proc.display_name,
-        running_fn=proc.running,
-        launch_fn=proc.launch_live,
-    )
-
-
 def _export_shortcuts(args: argparse.Namespace, prefs_path: Path, prefs: dict) -> list[str]:
     return shortcuts_mod.build_dump_block(
         prefs, all_bindings=getattr(args, "all_shortcuts", False)
@@ -351,7 +329,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         name="brave",
         help_text="Brave browser commands",
         namespaces=("shortcuts", "settings", "pwa"),
-        supports_live_apply=True,
         browser_notes=(
             "`--channel {stable,beta,nightly}` selects the Brave release\n"
             "channel and its profile root.\n"
@@ -361,7 +338,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default_profile_root=DEFAULT_PROFILE_ROOT,
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,
-        cmd_launch_fn=cmd_launch,
         cmd_restore_fn=cmd_restore,
         cmd_export_fn=cmd_export,
         export_has_shortcuts=True,

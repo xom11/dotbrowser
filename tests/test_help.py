@@ -42,26 +42,33 @@ def test_root_help_explains_capabilities_and_workflow() -> None:
     assert "restore" in out
 
 
-def test_brave_and_vivaldi_help_advertise_live_apply() -> None:
+def test_all_browser_help_advertises_automatic_live_apply() -> None:
     brave = _help("brave")
-    vivaldi_apply = _help("vivaldi", "apply")
     assert "[shortcuts] [settings] [pwa]" in brave
-    assert "live apply" in brave.lower()
     assert "--channel" in brave
-    assert "live apply" in vivaldi_apply.lower()
-    assert "--live-port" in vivaldi_apply
+    for browser in ("brave", "vivaldi", "chrome", "edge"):
+        browser_help = _help(browser)
+        apply_help = _help(browser, "apply")
+        assert "live apply" in apply_help.lower()
+        assert "--kill-browser" not in apply_help
+        assert "--live-port" not in apply_help
+        assert _run(browser, "launch", "--help").returncode != 0
 
-
-def test_edge_and_chrome_help_only_advertise_supported_apply_features() -> None:
-    edge_apply = _help("edge", "apply")
-    chrome = _help("chrome")
     chrome_apply = _help("chrome", "apply")
-    assert "[settings] [pwa]" in chrome
+    edge_apply = _help("edge", "apply")
     assert "[shortcuts]" not in chrome_apply
     assert "[shortcuts]" not in edge_apply
-    assert "--live-port" not in chrome_apply
-    assert "--live-port" not in edge_apply
-    assert "offline apply" in chrome.lower()
+
+
+def test_removed_apply_flags_are_rejected() -> None:
+    removed = [
+        ("--kill-browser",),
+        ("--live-port", "9333"),
+    ]
+    for option in removed:
+        result = _run("brave", "apply", *option, "missing.toml")
+        assert result.returncode != 0
+        assert "unrecognized arguments" in result.stderr
 
 
 def test_export_and_restore_help_state_deliberate_limits() -> None:
