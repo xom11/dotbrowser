@@ -185,6 +185,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         subparsers,
         name="vivaldi",
         help_text="Vivaldi browser commands",
+        namespaces=("shortcuts", "settings", "pwa"),
+        supports_live_apply=True,
+        browser_notes=(
+            "`settings search` and `settings describe` query Vivaldi's\n"
+            "installed prefs schema.\n"
+            "Shortcut commands use Vivaldi COMMAND_* names and lowercase\n"
+            "key bindings."
+        ),
         default_profile_root=DEFAULT_PROFILE_ROOT,
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,

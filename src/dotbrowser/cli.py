@@ -24,7 +24,32 @@ from dotbrowser.vivaldi import register as register_vivaldi
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dotbrowser",
-        description="Manage browser settings as dotfiles.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+Manage Chromium-based browser customizations as TOML dotfiles.
+
+Command shape:
+  dotbrowser <browser> [browser-options] <action> [action-options]
+
+Capability overview:
+  Brave          [shortcuts] [settings] [pwa]  live apply; stable/beta/nightly
+  Vivaldi        [shortcuts] [settings] [pwa]  live apply; settings schema search
+  Microsoft Edge [settings] [pwa]              offline apply only
+  Google Chrome  [settings] [pwa]              offline apply only
+
+`[settings]` writes unprotected Preferences keys. `[pwa]` manages
+force-installed web apps through browser policy. Brave and Vivaldi also
+manage keyboard shortcuts.""",
+        epilog="""\
+Typical workflow:
+  dotbrowser brave init -o brave.toml
+  dotbrowser brave apply --dry-run brave.toml
+  dotbrowser brave apply brave.toml
+  dotbrowser brave export -o snapshot.toml
+  dotbrowser brave restore --list
+
+Use `dotbrowser <browser> --help` to see browser capabilities and
+`dotbrowser <browser> <action> --help` for safety details and examples.""",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="browser", required=True, metavar="BROWSER")

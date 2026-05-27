@@ -37,6 +37,7 @@ from dotbrowser._base.utils import Plan, find_preferences, load_prefs, write_ato
 
 
 _MAX_URL_CONFIG_BYTES = 256 * 1024
+_HELP_FORMATTER = argparse.RawDescriptionHelpFormatter
 
 
 def _load_toml(path: Path) -> dict:
@@ -506,6 +507,9 @@ def register_browser(
     *,
     name: str,
     help_text: str,
+    namespaces: tuple[str, ...],
+    supports_live_apply: bool = False,
+    browser_notes: str | None = None,
     default_profile_root: Path | None,
     cmd_apply_fn,
     cmd_init_fn=None,
@@ -524,7 +528,38 @@ def register_browser(
     related flags (e.g. ``--channel`` for Brave's release channels) and
     defer profile-root resolution to runtime.
     """
-    p = subparsers.add_parser(name, help=help_text)
+    display_name = help_text.removesuffix(" browser commands")
+    table_list = " ".join(f"[{namespace}]" for namespace in namespaces)
+    if supports_live_apply:
+        execution_text = (
+            "Live apply is available when the browser is running; plain `apply`\n"
+            "creates or reuses a local DevTools endpoint as needed."
+        )
+    else:
+        execution_text = (
+            "Offline apply only: close the browser before writing, or use\n"
+            "`--kill-browser` to force-close and restart it."
+        )
+    apply_execution_text = execution_text.replace("\n", "\n  ")
+    notes = f"\n\nBrowser notes:\n{browser_notes}" if browser_notes else ""
+    p = subparsers.add_parser(
+        name,
+        help=help_text,
+        formatter_class=_HELP_FORMATTER,
+        description=f"""\
+Manage {display_name} customizations.
+
+Supported TOML tables: {table_list}
+{execution_text}{notes}""",
+        epilog=f"""\
+Typical workflow:
+  dotbrowser {name} init -o {name}.toml
+  dotbrowser {name} apply --dry-run {name}.toml
+  dotbrowser {name} apply {name}.toml
+  dotbrowser {name} export -o {name}-snapshot.toml
+
+Use `dotbrowser {name} <action> --help` for operational details.""",
+    )
 
     if normalize_args is not None:
         # Propagates onto every subcommand's namespace so cli.main()
@@ -564,7 +599,21 @@ def register_browser(
     sub = p.add_subparsers(dest="module", required=True, metavar="ACTION")
 
     if cmd_init_fn is not None:
-        i = sub.add_parser("init", help="scaffold a starter TOML config")
+        i = sub.add_parser(
+            "init",
+            help="scaffold a starter TOML config",
+            formatter_class=_HELP_FORMATTER,
+            description=f"""\
+Write a commented starter config for {display_name}.
+
+The template includes the supported tables for this browser: {table_list}.
+Without `--output`, the template is printed to stdout. With `--output`,
+an existing destination is never overwritten.""",
+            epilog=f"""\
+Examples:
+  dotbrowser {name} init
+  dotbrowser {name} init -o {name}.toml""",
+        )
         i.add_argument(
             "-o",
             "--output",
@@ -577,6 +626,18 @@ def register_browser(
         l = sub.add_parser(
             "launch",
             help="advanced: start the browser with a local DevTools endpoint",
+            formatter_class=_HELP_FORMATTER,
+            description=f"""\
+Start {display_name} with a private local DevTools endpoint for live apply.
+
+This advanced helper is unnecessary for normal use: plain `apply` can
+relaunch a running browser once and remember its endpoint. The port binds
+only to 127.0.0.1, but it still grants local browser automation access.""",
+            epilog=f"""\
+Examples:
+  dotbrowser {name} launch --live-port 9333
+  dotbrowser {name} launch --live-port 9333 https://example.com/
+  dotbrowser {name} apply --live-port 9333 {name}.toml""",
         )
         l.add_argument(
             "--live-port",
@@ -591,7 +652,33 @@ def register_browser(
 
     a = sub.add_parser(
         "apply",
-        help="apply [shortcuts], [settings] and [pwa] tables from a TOML config",
+        help=f"apply {table_list} tables from a TOML config",
+        formatter_class=_HELP_FORMATTER,
+        description=f"""\
+Apply {table_list} from one TOML document to {display_name}.
+
+Table semantics:
+  Missing table   skip that namespace and preserve its managed state.
+  Empty table     remove/reset all entries previously managed there.
+
+Safety:
+  --dry-run prints the planned diff without writing.
+  A real Preferences write creates one timestamped backup and verifies it.
+  [settings] keys tracked by Chromium MAC integrity are refused.
+  A changed [pwa] table writes managed policy and may require sudo or
+  Administrator privileges.
+
+Execution:
+  {apply_execution_text}""",
+        epilog=f"""\
+The config may be a local path or an HTTPS URL. For remote configs, use
+`--expect-sha256` to pin the content. Plain HTTP is refused unless you
+explicitly opt in with `--allow-http`.
+
+Examples:
+  dotbrowser {name} apply --dry-run {name}.toml
+  dotbrowser {name} apply {name}.toml
+  dotbrowser {name} apply --expect-sha256 HEX https://example.com/{name}.toml""",
     )
     a.add_argument(
         "config",
@@ -617,25 +704,57 @@ def register_browser(
         "-k",
         "--kill-browser",
         action="store_true",
-        help=f"force the old offline path: if {name} is running, force-kill it, "
-        "apply, then restart it",
+        help=(
+            f"force offline apply: if {name} is running, force-kill it, "
+            "apply, then restart it"
+            if supports_live_apply
+            else f"if {name} is running, force-kill it, apply, then restart it"
+        ),
     )
-    a.add_argument(
-        "--live-port",
-        type=int,
-        metavar="PORT",
-        default=None,
-        help=f"advanced/debug: use an existing {name} DevTools endpoint on "
-        "127.0.0.1:PORT instead of auto-detecting or auto-relaunching one",
-    )
+    if supports_live_apply:
+        a.add_argument(
+            "--live-port",
+            type=int,
+            metavar="PORT",
+            default=None,
+            help=f"advanced/debug: use an existing {name} DevTools endpoint on "
+            "127.0.0.1:PORT instead of auto-detecting or auto-relaunching one",
+        )
     a.set_defaults(func=cmd_apply_fn)
 
     if cmd_export_fn is not None:
+        if name == "brave":
+            export_scope = (
+                "[shortcuts] changes versus Brave defaults plus [pwa] "
+                "force-installed URLs."
+            )
+        elif name == "vivaldi":
+            export_scope = (
+                "[shortcuts] commands with non-empty bindings plus [pwa] "
+                "force-installed URLs; Vivaldi has no defaults mirror."
+            )
+        else:
+            export_scope = (
+                "[pwa] only. This browser has no supported [shortcuts] "
+                "namespace."
+            )
         e = sub.add_parser(
             "export",
-            help="emit current customizations as a TOML config "
-            "(shortcuts diff vs default + force-installed PWAs; "
-            "settings is not exportable -- see help text)",
+            help="emit exportable customizations as a TOML config",
+            formatter_class=_HELP_FORMATTER,
+            description=f"""\
+Export a round-trippable TOML snapshot for {display_name}.
+
+Output: {export_scope}
+
+[settings] is intentionally not exported: Chromium does not expose a
+defaults table for arbitrary Preferences keys, so a safe diff cannot be
+computed from a profile. Inspect known values with `settings dump` and
+protected keys with `settings blocked`.""",
+            epilog=f"""\
+Examples:
+  dotbrowser {name} export
+  dotbrowser {name} export -o {name}.toml""",
         )
         e.add_argument(
             "-o",
@@ -656,6 +775,21 @@ def register_browser(
         r = sub.add_parser(
             "restore",
             help="restore Preferences from a backup created by apply",
+            formatter_class=_HELP_FORMATTER,
+            description=f"""\
+Restore {display_name} Preferences from a backup made by `apply`.
+
+By default, the most recent timestamped backup is selected. A real restore
+also clears dotbrowser shortcut/settings sidecars so the restored profile
+does not remain incorrectly marked as managed.
+
+[pwa] policy is not restored by this command because it is stored outside
+Preferences in managed policy storage.""",
+            epilog=f"""\
+Examples:
+  dotbrowser {name} restore --list
+  dotbrowser {name} restore --dry-run
+  dotbrowser {name} restore --from FILE""",
         )
         r.add_argument(
             "--from",

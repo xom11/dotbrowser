@@ -229,10 +229,38 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser("shortcuts", help="inspect keyboard shortcuts (apply lives at `brave apply`)")
+    p = subparsers.add_parser(
+        "shortcuts",
+        help="inspect keyboard shortcuts (apply lives at `brave apply`)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+Inspect Brave keyboard shortcut bindings managed through [shortcuts].
+
+Config keys are friendly Brave command names such as `focus_location`.
+Binding values use Chromium KeyEvent codes such as `Control+KeyL` or
+`Meta+Shift+KeyP`; Meta/Command is normalized for the current OS.""",
+        epilog="""\
+Examples:
+  dotbrowser brave shortcuts list tab
+  dotbrowser brave shortcuts dump -o shortcuts.toml
+  dotbrowser brave shortcuts dump --all""",
+    )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
 
-    d = sub.add_parser("dump", help="emit current shortcuts as TOML")
+    d = sub.add_parser(
+        "dump",
+        help="emit current shortcuts as TOML",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+Emit a [shortcuts] TOML table from Brave Preferences.
+
+By default, only bindings differing from Brave defaults are output.
+Use `--all` when you need the complete binding map.""",
+        epilog="""\
+Examples:
+  dotbrowser brave shortcuts dump
+  dotbrowser brave shortcuts dump --all -o all-shortcuts.toml""",
+    )
     d.add_argument("-o", "--output", help="write to file instead of stdout")
     d.add_argument(
         "-a",
@@ -242,6 +270,18 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     d.set_defaults(func=cmd_dump)
 
-    l = sub.add_parser("list", help="list known command names")
+    l = sub.add_parser(
+        "list",
+        help="list known command names",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+List Brave command names accepted in a [shortcuts] table.
+
+The optional filter is a case-insensitive substring match.""",
+        epilog="""\
+Examples:
+  dotbrowser brave shortcuts list
+  dotbrowser brave shortcuts list focus""",
+    )
     l.add_argument("filter", nargs="?", help="substring filter")
     l.set_defaults(func=cmd_list)

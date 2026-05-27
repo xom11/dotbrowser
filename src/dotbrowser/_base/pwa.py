@@ -370,6 +370,16 @@ def register(
     p = subparsers.add_parser(
         "pwa",
         help=f"inspect force-installed PWAs (apply lives at `{browser_name} apply`)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=f"""\
+Inspect force-installed PWAs managed through {browser_name.title()} policy.
+
+The [pwa] table controls Chromium's managed policy list of HTTPS app URLs.
+Writing changes occurs through `{browser_name} apply` and requires elevated
+privileges; `dump` is read-only.""",
+        epilog=f"""\
+Example:
+  dotbrowser {browser_name} pwa dump -o pwa.toml""",
     )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
 
@@ -380,6 +390,18 @@ def register(
     d = sub.add_parser(
         "dump",
         help=f"emit URLs from {_help_path} as a `[pwa]` TOML table",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=f"""\
+Emit a [pwa] TOML table from the current managed policy source.
+
+Source:
+  {_help_path}
+
+This is a read-only operation and does not need the privileges required by
+`dotbrowser {browser_name} apply` when policy changes are written.""",
+        epilog=f"""\
+Example:
+  dotbrowser {browser_name} pwa dump -o pwa.toml""",
     )
     d.add_argument("-o", "--output", help="write to file instead of stdout")
     d.set_defaults(func=cmd_dump_fn)

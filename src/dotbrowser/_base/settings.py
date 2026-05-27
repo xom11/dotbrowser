@@ -377,12 +377,35 @@ def register(
     p = subparsers.add_parser(
         "settings",
         help=f"inspect general settings (apply lives at `{browser_name} apply`)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=f"""\
+Inspect general {browser_name.title()} Preferences managed through [settings].
+
+`dump` prints currently managed keys by default, or explicitly requested
+dotted paths. `blocked` lists MAC-protected Preferences keys that
+`dotbrowser {browser_name} apply` refuses rather than writing values the
+browser would reset on launch.""",
+        epilog=f"""\
+Examples:
+  dotbrowser {browser_name} settings dump
+  dotbrowser {browser_name} settings dump bookmark_bar.show_on_all_tabs
+  dotbrowser {browser_name} settings blocked""",
     )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
 
     d = sub.add_parser(
         "dump",
         help="emit current values as TOML -- managed keys (default) or specific keys",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=f"""\
+Emit a [settings] TOML block from {browser_name.title()} Preferences.
+
+Without keys, output is limited to keys tracked by a prior dotbrowser
+apply. Pass dotted keys explicitly to inspect values not yet managed.""",
+        epilog=f"""\
+Examples:
+  dotbrowser {browser_name} settings dump
+  dotbrowser {browser_name} settings dump bookmark_bar.show_on_all_tabs -o settings.toml""",
     )
     d.add_argument(
         "keys",
@@ -395,6 +418,15 @@ def register(
     b = sub.add_parser(
         "blocked",
         help="list MAC-protected keys that `apply` will refuse",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=f"""\
+Print MAC-protected preference paths for the selected {browser_name.title()} profile.
+
+These keys cannot safely be written by dotbrowser: Chromium verifies their
+integrity at startup and would reset unauthenticated changes.""",
+        epilog=f"""\
+Example:
+  dotbrowser {browser_name} settings blocked -o blocked-settings.toml""",
     )
     b.add_argument("-o", "--output", help="write to file instead of stdout")
     b.set_defaults(func=lambda args, bn=browser_name: cmd_blocked(bn, args))

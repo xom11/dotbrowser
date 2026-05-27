@@ -145,6 +145,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         subparsers,
         name="edge",
         help_text="Microsoft Edge browser commands",
+        namespaces=("settings", "pwa"),
+        browser_notes=(
+            "Edge does not expose supported keyboard shortcut preferences;\n"
+            "there is no [shortcuts] table."
+        ),
         default_profile_root=DEFAULT_PROFILE_ROOT,
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,

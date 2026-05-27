@@ -136,6 +136,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     s = sub.add_parser(
         "search",
         help="search the Vivaldi prefs schema by keyword",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+Search Vivaldi's installed prefs schema for discoverable [settings] keys.
+
+Matches keys, descriptions and enum names. Set
+DOTBROWSER_VIVALDI_PREFS_DEF when Vivaldi is installed outside a standard
+location.""",
+        epilog="""\
+Examples:
+  dotbrowser vivaldi settings search "tab bar position"
+  dotbrowser vivaldi settings search tabs --limit 50""",
     )
     s.add_argument(
         "query",
@@ -152,6 +163,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     d = sub.add_parser(
         "describe",
         help="show the schema entry for a key plus its current value",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+Show one Vivaldi schema definition and its current profile value.
+
+For enum settings, the output exposes the friendly name-to-integer mapping
+that `apply` validates and coerces.""",
+        epilog="""\
+Example:
+  dotbrowser vivaldi settings describe vivaldi.tabs.bar.position""",
     )
     d.add_argument("key", help="dotted-path key, e.g. vivaldi.tabs.bar.position")
     d.set_defaults(func=cmd_describe)

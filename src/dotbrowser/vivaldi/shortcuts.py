@@ -415,10 +415,36 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser(
         "shortcuts",
         help="inspect keyboard shortcuts (apply lives at `vivaldi apply`)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+Inspect Vivaldi keyboard shortcut bindings managed through [shortcuts].
+
+Config keys are Vivaldi COMMAND_* identifiers, such as `COMMAND_CLOSE_TAB`.
+Values use Vivaldi lowercase binding syntax, such as `meta+w` or
+`ctrl+shift+tab`. Installed defaults seed command discovery when available.""",
+        epilog="""\
+Examples:
+  dotbrowser vivaldi shortcuts list tab
+  dotbrowser vivaldi shortcuts dump -o shortcuts.toml
+  dotbrowser vivaldi shortcuts dump --all""",
     )
     sub = p.add_subparsers(dest="action", required=True, metavar="ACTION")
 
-    d = sub.add_parser("dump", help="emit current shortcuts as TOML")
+    d = sub.add_parser(
+        "dump",
+        help="emit current shortcuts as TOML",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+Emit a [shortcuts] TOML table from Vivaldi Preferences.
+
+Vivaldi has no stored defaults mirror, so the default output contains
+commands with non-empty bindings, including compiled-in defaults. Use
+`--all` to also include unbound commands.""",
+        epilog="""\
+Examples:
+  dotbrowser vivaldi shortcuts dump
+  dotbrowser vivaldi shortcuts dump --all -o all-shortcuts.toml""",
+    )
     d.add_argument("-o", "--output", help="write to file instead of stdout")
     d.add_argument(
         "-a",
@@ -428,6 +454,19 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     d.set_defaults(func=cmd_dump)
 
-    l = sub.add_parser("list", help="list command names known to this profile")
+    l = sub.add_parser(
+        "list",
+        help="list command names known to this profile",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""\
+List Vivaldi COMMAND_* names accepted in a [shortcuts] table.
+
+Commands come from the selected profile or, for a fresh profile, the
+installed Vivaldi preference schema when it can be found.""",
+        epilog="""\
+Examples:
+  dotbrowser vivaldi shortcuts list
+  dotbrowser vivaldi shortcuts list tab""",
+    )
     l.add_argument("filter", nargs="?", help="substring filter (case-insensitive)")
     l.set_defaults(func=cmd_list)

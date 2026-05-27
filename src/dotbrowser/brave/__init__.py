@@ -350,6 +350,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         subparsers,
         name="brave",
         help_text="Brave browser commands",
+        namespaces=("shortcuts", "settings", "pwa"),
+        supports_live_apply=True,
+        browser_notes=(
+            "`--channel {stable,beta,nightly}` selects the Brave release\n"
+            "channel and its profile root.\n"
+            "Shortcut names map to Brave command IDs; portable Meta+\n"
+            "bindings are normalized per OS."
+        ),
         default_profile_root=DEFAULT_PROFILE_ROOT,
         cmd_apply_fn=cmd_apply,
         cmd_init_fn=cmd_init,
