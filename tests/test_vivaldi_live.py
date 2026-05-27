@@ -38,6 +38,8 @@ def test_vivaldi_live_apply_uses_vivaldi_prefs_and_reloads_ui(
     prefs = {
         "vivaldi": {
             "tabs": {"bar": {"position": 0}},
+            "panels": {"position": 0},
+            "auto_hide": {"enabled": False},
             "actions": [
                 {
                     "COMMAND_NEW_TAB": {
@@ -57,12 +59,19 @@ def test_vivaldi_live_apply_uses_vivaldi_prefs_and_reloads_ui(
             "vivaldi.tabs.bar.position": {
                 "type": "enum",
                 "enum_values": {"top": 0, "left": 1},
-            }
+            },
+            "vivaldi.panels.position": {
+                "type": "enum",
+                "enum_values": {"left": 0, "right": 1},
+            },
+            "vivaldi.auto_hide.enabled": {"type": "boolean"},
         },
     )
 
     def apply_fn(target: dict) -> None:
         target["vivaldi"]["tabs"]["bar"]["position"] = 1
+        target["vivaldi"]["panels"]["position"] = 1
+        target["vivaldi"]["auto_hide"]["enabled"] = True
         target["vivaldi"]["actions"][0]["COMMAND_NEW_TAB"]["shortcuts"] = ["ctrl+shift+y"]
 
     plan = Plan(
@@ -83,6 +92,14 @@ def test_vivaldi_live_apply_uses_vivaldi_prefs_and_reloads_ui(
         "vivaldi.prefs.set" in expr
         and "vivaldi.tabs.bar.position" in expr
         and '"left"' in expr
+        for expr in fake.evaluations
+    )
+    assert any(
+        "vivaldi.prefs.set" in expr
+        and "vivaldi.panels.position" in expr
+        and '"right"' in expr
+        and "vivaldi.auto_hide.enabled" in expr
+        and "true" in expr
         for expr in fake.evaluations
     )
     assert any(
