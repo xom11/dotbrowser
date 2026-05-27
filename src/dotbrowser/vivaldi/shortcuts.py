@@ -191,6 +191,55 @@ def diff_summary(
     return lines
 
 
+def _shortcut_collision_warnings(
+    current: dict[str, dict],
+    target: dict[str, list[str]],
+    removed: dict[str, list[str]],
+) -> list[str]:
+    """Warn when a configured shortcut remains bound to another command.
+
+    Vivaldi can keep ambiguous bindings in Preferences. When a user sets
+    ``COMMAND_FOCUS_SEARCHFIELD = ["ctrl+s"]`` but ``COMMAND_SAVE_PAGE``
+    still owns ``ctrl+s``, the file writes correctly but runtime dispatch
+    may still feel wrong. We warn instead of auto-unbinding unrelated
+    commands because dotbrowser only manages commands named in the config.
+    """
+    final: dict[str, list[str]] = {}
+    for name, entry in current.items():
+        if not isinstance(entry, dict):
+            continue
+        keys = entry.get("shortcuts", [])
+        if isinstance(keys, list):
+            final[name] = list(keys)
+    for name, keys in removed.items():
+        final[name] = list(keys)
+    for name, keys in target.items():
+        final[name] = list(keys)
+
+    by_key: dict[str, list[str]] = {}
+    for name, keys in final.items():
+        for key in keys:
+            by_key.setdefault(key, []).append(name)
+
+    warnings: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for name in sorted(target):
+        for key in target[name]:
+            others = sorted(cmd for cmd in by_key.get(key, []) if cmd != name)
+            if not others:
+                continue
+            marker = (name, key)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            warnings.append(
+                f"warning: shortcut {key!r} is also bound to "
+                f"{', '.join(others)}; Vivaldi may keep routing it there "
+                f"unless you also unbind or change that command"
+            )
+    return warnings
+
+
 def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     """Compute the apply plan for a `[shortcuts]` TOML table.
 
@@ -242,6 +291,7 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
     removed_with_original = {n: list(originals[n]) for n in removed_names}
 
     diff = diff_summary(current, config, removed_with_original)
+    warnings = _shortcut_collision_warnings(current, config, removed_with_original)
 
     def apply_fn(prefs: dict) -> None:
         if bootstrap_actions is not None and not _read_actions_dict(prefs):
@@ -288,6 +338,7 @@ def plan_apply(prefs_path: Path, prefs: dict, raw_table: object) -> Plan:
         state_payload={"originals": final_originals},
         apply_fn=apply_fn,
         verify_fn=verify_fn,
+        warnings=warnings,
     )
 
 

@@ -156,6 +156,53 @@ def test_plan_apply_snapshots_originals_on_first_apply(tmp_path: Path) -> None:
     assert plan.state_payload == {"originals": {"COMMAND_CLOSE_TAB": ["meta+w"]}}
 
 
+def test_plan_apply_warns_when_configured_shortcut_collides(tmp_path: Path) -> None:
+    """A configured key that is still bound to another command is easy
+    to miss and makes the applied shortcut feel broken at runtime."""
+    prefs_path = tmp_path / "Preferences"
+    prefs = _make_prefs(
+        {
+            "COMMAND_FOCUS_SEARCHFIELD": {"shortcuts": ["ctrl+k"]},
+            "COMMAND_SAVE_PAGE": {"shortcuts": ["ctrl+s"]},
+        }
+    )
+
+    plan = sc.plan_apply(
+        prefs_path,
+        prefs,
+        {"COMMAND_FOCUS_SEARCHFIELD": ["ctrl+s"]},
+    )
+
+    assert plan.warnings == [
+        "warning: shortcut 'ctrl+s' is also bound to COMMAND_SAVE_PAGE; "
+        "Vivaldi may keep routing it there unless you also unbind or "
+        "change that command"
+    ]
+
+
+def test_plan_apply_no_collision_warning_when_other_command_is_unbound(
+    tmp_path: Path,
+) -> None:
+    prefs_path = tmp_path / "Preferences"
+    prefs = _make_prefs(
+        {
+            "COMMAND_FOCUS_SEARCHFIELD": {"shortcuts": ["ctrl+k"]},
+            "COMMAND_SAVE_PAGE": {"shortcuts": ["ctrl+s"]},
+        }
+    )
+
+    plan = sc.plan_apply(
+        prefs_path,
+        prefs,
+        {
+            "COMMAND_FOCUS_SEARCHFIELD": ["ctrl+s"],
+            "COMMAND_SAVE_PAGE": [],
+        },
+    )
+
+    assert plan.warnings == []
+
+
 def test_plan_apply_does_not_re_snapshot_already_managed(tmp_path: Path) -> None:
     """Re-applying a config that re-manages an already-managed command
     must NOT overwrite the snapshot with the most-recent override —
