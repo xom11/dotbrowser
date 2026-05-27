@@ -15,6 +15,25 @@ from dotbrowser.brave import shortcuts as shortcuts_mod
 
 _SETTINGS_URL = "chrome://settings/appearance"
 _SHORTCUTS_URL = "chrome://settings/system/shortcuts"
+_NEWTAB_URL = "chrome://newtab/"
+_NEWTAB_ACTIONS = {
+    "ntp.shortcust_visible": ("topSites", "setShowTopSites"),
+    "brave.brave_search.show-ntp-search": ("search", "setShowSearchBox"),
+    "brave.brave_search.show-ntp-chat": ("search", "setShowChatInput"),
+    "brave.new_tab_page.show_background_image": (
+        "background",
+        "setBackgroundsEnabled",
+    ),
+    "brave.new_tab_page.show_branded_background_image": (
+        "background",
+        "setSponsoredImagesEnabled",
+    ),
+    "brave.new_tab_page.show_clock": ("newTab", "setShowClock"),
+    "brave.new_tab_page.show_stats": ("newTab", "setShowShieldsStats"),
+    "brave.new_tab_page.show_rewards": ("rewards", "setShowRewardsWidget"),
+    "brave.new_tab_page.show_brave_vpn": ("vpn", "setShowVpnWidget"),
+    "brave.new_tab_page.show_together": ("newTab", "setShowTalkWidget"),
+}
 
 
 def _page_target(client: CdpClient) -> dict:
@@ -109,8 +128,120 @@ def _settings_script(changes: list[tuple[str, Any]]) -> str | None:
     )
 
 
+def _route_settings(
+    changes: list[tuple[str, Any]],
+) -> tuple[list[tuple[str, str, str, Any]], list[tuple[str, Any]]]:
+    newtab: list[tuple[str, str, str, Any]] = []
+    ordinary: list[tuple[str, Any]] = []
+    for key, value in changes:
+        route = _NEWTAB_ACTIONS.get(key)
+        if route is None:
+            ordinary.append((key, value))
+            continue
+        store, action = route
+        newtab.append((key, store, action, value))
+    return newtab, ordinary
+
+
+def _newtab_preflight_script(changes: list[tuple[str, str, str, Any]]) -> str | None:
+    if not changes:
+        return None
+    routes = [
+        {"key": key, "store": store, "action": action}
+        for key, store, action, _value in changes
+    ]
+    routes_json = json.dumps(routes, separators=(",", ":"))
+    return (
+        "(async () => {"
+        f"const routes = {routes_json};"
+        "const missing = () => routes.filter(({store, action}) => "
+        "typeof window._ntp?.[store]?.getState?.()?.actions?.[action] "
+        "!== 'function').map(({key}) => key);"
+        "let unsupported = missing();"
+        "for (let attempt = 0; attempt < 20 && unsupported.length; attempt++) {"
+        "await new Promise(r => setTimeout(r, 50));"
+        "unsupported = missing();"
+        "}"
+        "return unsupported;"
+        "})()"
+    )
+
+
+def _settings_preflight_script(changes: list[tuple[str, Any]]) -> str | None:
+    if not changes:
+        return None
+    keys_json = json.dumps([key for key, _value in changes], separators=(",", ":"))
+    return (
+        "(async () => {"
+        f"const keys = {keys_json};"
+        "const exists = key => new Promise(resolve => {"
+        "chrome.settingsPrivate.getPref(key, pref => {"
+        "const err = chrome.runtime.lastError;"
+        "resolve(!err && !!pref);"
+        "});"
+        "});"
+        "const unsupported = [];"
+        "for (const key of keys) {"
+        "if (!(await exists(key))) unsupported.push(key);"
+        "}"
+        "return unsupported;"
+        "})()"
+    )
+
+
+def _newtab_script(changes: list[tuple[str, str, str, Any]]) -> str | None:
+    if not changes:
+        return None
+    calls = "".join(
+        f"window._ntp.{store}.getState().actions.{action}({json.dumps(value)});"
+        for _key, store, action, value in changes
+    )
+    return (
+        "(async () => {"
+        f"{calls}"
+        "await new Promise(r => setTimeout(r, 300));"
+        "return true;"
+        "})()"
+    )
+
+
+def _preflight_settings(
+    client: CdpClient,
+    target: dict,
+    newtab_changes: list[tuple[str, str, str, Any]],
+    ordinary_changes: list[tuple[str, Any]],
+) -> list[str]:
+    unsupported: list[str] = []
+    newtab_script = _newtab_preflight_script(newtab_changes)
+    if newtab_script is not None:
+        client.navigate(target, _NEWTAB_URL)
+        time.sleep(0.5)
+        result = client.evaluate(target, newtab_script)
+        if isinstance(result, list):
+            unsupported.extend(key for key in result if isinstance(key, str))
+
+    settings_script = _settings_preflight_script(ordinary_changes)
+    if settings_script is not None:
+        client.navigate(target, _SETTINGS_URL)
+        time.sleep(0.5)
+        result = client.evaluate(target, settings_script)
+        if isinstance(result, list):
+            unsupported.extend(key for key in result if isinstance(key, str))
+    return unsupported
+
+
 def apply_live(port: int, prefs_path: Path, prefs: dict, plans: list[Plan]) -> None:
     target_prefs = _live.compute_target_prefs(prefs, plans)
+    changes = _setting_changes(prefs, target_prefs)
+    newtab_changes, ordinary_changes = _route_settings(changes)
+    client = CdpClient(port)
+    target = _page_target(client)
+    unsupported = _preflight_settings(
+        client, target, newtab_changes, ordinary_changes
+    )
+    if unsupported:
+        raise _live.LiveApplyUnsupported("Brave", unsupported)
+
     has_pref_changes = any(
         not plan.empty and plan.namespace in {"settings", "shortcuts"}
         for plan in plans
@@ -120,9 +251,13 @@ def apply_live(port: int, prefs_path: Path, prefs: dict, plans: list[Plan]) -> N
 
     _live.apply_external_plans(plans)
 
-    client = CdpClient(port)
-    target = _page_target(client)
-    settings_script = _settings_script(_setting_changes(prefs, target_prefs))
+    newtab_script = _newtab_script(newtab_changes)
+    if newtab_script is not None:
+        client.navigate(target, _NEWTAB_URL)
+        time.sleep(0.5)
+        client.evaluate(target, newtab_script)
+
+    settings_script = _settings_script(ordinary_changes)
     if settings_script is not None:
         client.navigate(target, _SETTINGS_URL)
         time.sleep(0.5)
