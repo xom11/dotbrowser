@@ -183,6 +183,89 @@ def test_running_browser_reuses_existing_devtools_endpoint(
     assert calls == ["live:9555"]
 
 
+def test_plain_live_apply_unsupported_setting_falls_back_without_force_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile_root = _profile(tmp_path)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[settings]\nfoo.bar = 1\n")
+    prefs_path = profile_root / "Default" / "Preferences"
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(orch, "find_devtools_port", lambda _root, _profile: 9555)
+    monkeypatch.setattr(
+        orch,
+        "wait_for_devtools_endpoint",
+        lambda port, display_name: calls.append(("wait", (port, display_name))),
+    )
+    monkeypatch.setattr(
+        orch,
+        "remember_devtools_port",
+        lambda root, profile, port: calls.append(
+            ("remember", (root, profile, port))
+        ),
+    )
+
+    def unsupported_live_apply(*_args: object) -> None:
+        raise live_apply.LiveApplyUnsupported("Brave", ["foo.bar"])
+
+    orch.cmd_apply(
+        _args(profile_root, cfg),
+        display_name="Brave",
+        running_fn=lambda: True,
+        pids_fn=lambda: ["123"],
+        find_cmdline_fn=lambda: ["brave"],
+        kill_fn=lambda: (_ for _ in ()).throw(AssertionError("must not force-kill")),
+        restart_fn=lambda _cmd: [],
+        build_plans_fn=_build_plan,
+        live_apply_fn=unsupported_live_apply,
+        graceful_close_fn=lambda: calls.append(("close", None)),
+        launch_live_fn=lambda root, profile, port, url: calls.append(
+            ("launch", (root, profile, port, url))
+        ) or ["brave"],
+    )
+
+    assert json.loads(prefs_path.read_text()) == {"foo": {"bar": 1}}
+    assert calls == [
+        ("close", None),
+        ("launch", (profile_root, "Default", 9555, None)),
+        ("wait", (9555, "Brave")),
+        ("remember", (profile_root, "Default", 9555)),
+    ]
+
+
+def test_explicit_live_port_unsupported_setting_does_not_close_or_write(
+    tmp_path: Path,
+) -> None:
+    profile_root = _profile(tmp_path)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[settings]\nfoo.bar = 1\n")
+    prefs_path = profile_root / "Default" / "Preferences"
+    before = prefs_path.read_bytes()
+    calls: list[str] = []
+
+    def unsupported_live_apply(*_args: object) -> None:
+        raise live_apply.LiveApplyUnsupported("Brave", ["foo.bar"])
+
+    with pytest.raises(SystemExit, match="foo.bar"):
+        orch.cmd_apply(
+            _args(profile_root, cfg, live_port=9333),
+            display_name="Brave",
+            running_fn=lambda: True,
+            pids_fn=lambda: ["123"],
+            find_cmdline_fn=lambda: ["brave"],
+            kill_fn=lambda: calls.append("kill"),
+            restart_fn=lambda _cmd: [],
+            build_plans_fn=_build_plan,
+            live_apply_fn=unsupported_live_apply,
+            graceful_close_fn=lambda: calls.append("close"),
+            launch_live_fn=lambda *_args: calls.append("launch") or ["brave"],
+        )
+
+    assert calls == []
+    assert prefs_path.read_bytes() == before
+
+
 def test_changed_leaf_paths_expands_new_nested_dicts() -> None:
     before = {"brave": {}}
     after = {"brave": {"tabs": {"vertical_tabs_enabled": True}}}

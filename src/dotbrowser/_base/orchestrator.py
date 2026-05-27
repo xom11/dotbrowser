@@ -33,6 +33,7 @@ from dotbrowser._base.cdp import (
     remember_devtools_port,
     wait_for_devtools_endpoint,
 )
+from dotbrowser._base.live_apply import LiveApplyUnsupported
 from dotbrowser._base.utils import Plan, find_preferences, load_prefs, write_atomic
 
 
@@ -135,6 +136,7 @@ def cmd_apply(
     module's function names takes effect.
     """
     live_port = getattr(args, "live_port", None)
+    explicit_live_port = live_port is not None
     if live_port is not None and getattr(args, "kill_browser", False):
         sys.exit("error: --live-port cannot be used with --kill-browser")
     prefs_path = find_preferences(args.profile_root, args.profile)
@@ -203,6 +205,7 @@ def cmd_apply(
 
     saved_cmdline: list[str] | None = None
     was_killed = False
+    relaunch_live_port: int | None = None
     if running_fn():
         if live_apply_fn is not None and not args.kill_browser:
             if live_port is None:
@@ -227,23 +230,50 @@ def cmd_apply(
                 )
                 wait_for_devtools_endpoint(live_port, display_name)
             live_port = int(live_port)
-            live_apply_fn(live_port, prefs_path, prefs, plans)
-            remember_devtools_port(args.profile_root, args.profile, live_port)
-            return
+            try:
+                live_apply_fn(live_port, prefs_path, prefs, plans)
+            except LiveApplyUnsupported as e:
+                settings = "\n".join(f"  {key}" for key in e.keys)
+                if explicit_live_port:
+                    sys.exit(
+                        f"error: {e.browser_name} cannot apply these settings "
+                        f"through the active live endpoint:\n{settings}\n"
+                        "Run without --live-port to allow a normal close, "
+                        "offline apply, and relaunch."
+                    )
+                if graceful_close_fn is None or launch_live_fn is None:
+                    sys.exit(
+                        f"error: {e.browser_name} cannot apply these settings "
+                        f"live and cannot be re-launched for offline apply:\n"
+                        f"{settings}"
+                    )
+                print(
+                    f"{display_name} cannot apply every requested setting "
+                    "live; closing it normally for offline apply "
+                    "(no force-kill)."
+                )
+                print(settings)
+                graceful_close_fn()
+                relaunch_live_port = live_port
+            else:
+                remember_devtools_port(args.profile_root, args.profile, live_port)
+                return
         if not args.kill_browser:
-            sys.exit(
-                f"error: {display_name} is running. Close it first, "
-                f"or pass --kill-browser\n"
-                f"({display_name} caches prefs in memory and overwrites "
-                f"the file on exit,\nso editing while running is unreliable. "
-                f"--kill-browser force-kills\n{display_name} to prevent "
-                f"the flush, applies, then restarts it.)"
-            )
-        saved_cmdline = find_cmdline_fn()
-        pid_list = pids_fn()
-        print(f"killing {display_name} (pids: {' '.join(pid_list)})")
-        kill_fn()
-        was_killed = True
+            if relaunch_live_port is None:
+                sys.exit(
+                    f"error: {display_name} is running. Close it first, "
+                    f"or pass --kill-browser\n"
+                    f"({display_name} caches prefs in memory and overwrites "
+                    f"the file on exit,\nso editing while running is unreliable. "
+                    f"--kill-browser force-kills\n{display_name} to prevent "
+                    f"the flush, applies, then restarts it.)"
+                )
+        elif relaunch_live_port is None:
+            saved_cmdline = find_cmdline_fn()
+            pid_list = pids_fn()
+            print(f"killing {display_name} (pids: {' '.join(pid_list)})")
+            kill_fn()
+            was_killed = True
 
     backup = prefs_path.with_suffix(
         prefs_path.suffix + f".bak.{datetime.now():%Y%m%d-%H%M%S}"
@@ -281,7 +311,19 @@ def cmd_apply(
         plan.verify_fn(reloaded)
     print("ok -- applied and verified")
 
-    if saved_cmdline:
+    if relaunch_live_port is not None and launch_live_fn is not None:
+        used = launch_live_fn(
+            args.profile_root, args.profile, relaunch_live_port, None
+        )
+        print(
+            f"relaunching {display_name} with live endpoint: "
+            f"{' '.join(map(str, used))}"
+        )
+        wait_for_devtools_endpoint(relaunch_live_port, display_name)
+        remember_devtools_port(
+            args.profile_root, args.profile, relaunch_live_port
+        )
+    elif saved_cmdline:
         used = restart_fn(saved_cmdline)
         print(f"restarting {display_name}: {' '.join(used)}")
     elif was_killed:

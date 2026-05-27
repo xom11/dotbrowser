@@ -15,6 +15,15 @@ from dotbrowser._base.utils import Plan
 MISSING = object()
 
 
+class LiveApplyUnsupported(Exception):
+    """A live adapter cannot apply one or more settings without restarting."""
+
+    def __init__(self, browser_name: str, keys: list[str]) -> None:
+        super().__init__(browser_name, keys)
+        self.browser_name = browser_name
+        self.keys = keys
+
+
 def compute_target_prefs(prefs: dict, plans: list[Plan]) -> dict:
     """Return the Preferences dict that normal offline apply would write."""
     target = copy.deepcopy(prefs)
