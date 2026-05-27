@@ -287,4 +287,3 @@ Expected: all tests pass.
 git add README.md
 git commit -m "docs: describe runtime live apply fallback behavior"
 ```
-
