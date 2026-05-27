@@ -22,6 +22,7 @@ from dotbrowser._base.orchestrator import (
     register_browser,
 )
 from dotbrowser._base.utils import Plan
+from dotbrowser.chrome import live as live_mod
 from dotbrowser.chrome import pwa as pwa_mod
 from dotbrowser.chrome import settings as settings_mod
 from dotbrowser.chrome.utils import (  # noqa: F401
@@ -103,7 +104,9 @@ def cmd_apply(args: argparse.Namespace) -> None:
         find_cmdline_fn=find_main_chrome_cmdline,
         restart_fn=restart_chrome,
         build_plans_fn=_build_plans,
+        live_apply_fn=live_mod.apply_live,
         graceful_close_fn=BROWSER_PROCESS.close_and_wait,
+        launch_live_fn=BROWSER_PROCESS.launch_live,
     )
 
 
