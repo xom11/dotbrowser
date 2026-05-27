@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import json
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -96,8 +95,4 @@ def refuse_live_removals(
 ) -> None:
     removals = [".".join(parts) for parts, value in changes if value is MISSING]
     if removals:
-        sys.exit(
-            f"error: --live-port cannot remove/reset {browser_name} settings yet:\n"
-            + "\n".join(f"  {key}" for key in removals)
-            + "\nClose the browser and run without --live-port, or use --kill-browser."
-        )
+        raise LiveApplyUnsupported(browser_name, removals)

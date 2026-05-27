@@ -120,9 +120,7 @@ def cmd_apply(
     *,
     display_name: str,
     running_fn: Callable[[], bool],
-    pids_fn: Callable[[], list[str]],
     find_cmdline_fn: Callable[[], list[str] | None],
-    kill_fn: Callable[[], None],
     restart_fn: Callable[[list[str]], list[str]],
     build_plans_fn: Callable,
     live_apply_fn: Callable[[int, Path, dict, list], None] | None = None,
@@ -135,10 +133,6 @@ def cmd_apply(
     ``cmd_apply`` wrapper, so test monkeypatching of the browser
     module's function names takes effect.
     """
-    live_port = getattr(args, "live_port", None)
-    explicit_live_port = live_port is not None
-    if live_port is not None and getattr(args, "kill_browser", False):
-        sys.exit("error: --live-port cannot be used with --kill-browser")
     prefs_path = find_preferences(args.profile_root, args.profile)
     doc = load_toml_source(
         args.config,
@@ -204,12 +198,11 @@ def cmd_apply(
                 )
 
     saved_cmdline: list[str] | None = None
-    was_killed = False
+    was_closed = False
     relaunch_live_port: int | None = None
     if running_fn():
-        if live_apply_fn is not None and not args.kill_browser:
-            if live_port is None:
-                live_port = find_devtools_port(args.profile_root, args.profile)
+        if live_apply_fn is not None:
+            live_port = find_devtools_port(args.profile_root, args.profile)
             if live_port is None:
                 if graceful_close_fn is None or launch_live_fn is None:
                     sys.exit(
@@ -234,13 +227,6 @@ def cmd_apply(
                 live_apply_fn(live_port, prefs_path, prefs, plans)
             except LiveApplyUnsupported as e:
                 settings = "\n".join(f"  {key}" for key in e.keys)
-                if explicit_live_port:
-                    sys.exit(
-                        f"error: {e.browser_name} cannot apply these settings "
-                        f"through the active live endpoint:\n{settings}\n"
-                        "Run without --live-port to allow a normal close, "
-                        "offline apply, and relaunch."
-                    )
                 if graceful_close_fn is None or launch_live_fn is None:
                     sys.exit(
                         f"error: {e.browser_name} cannot apply these settings "
@@ -255,25 +241,20 @@ def cmd_apply(
                 print(settings)
                 graceful_close_fn()
                 relaunch_live_port = live_port
+                was_closed = True
             else:
                 remember_devtools_port(args.profile_root, args.profile, live_port)
                 return
-        if not args.kill_browser:
-            if relaunch_live_port is None:
-                sys.exit(
-                    f"error: {display_name} is running. Close it first, "
-                    f"or pass --kill-browser\n"
-                    f"({display_name} caches prefs in memory and overwrites "
-                    f"the file on exit,\nso editing while running is unreliable. "
-                    f"--kill-browser force-kills\n{display_name} to prevent "
-                    f"the flush, applies, then restarts it.)"
-                )
+        elif graceful_close_fn is None:
+            sys.exit(
+                f"error: {display_name} is running but dotbrowser cannot "
+                "request a normal close for offline apply."
+            )
         elif relaunch_live_port is None:
             saved_cmdline = find_cmdline_fn()
-            pid_list = pids_fn()
-            print(f"killing {display_name} (pids: {' '.join(pid_list)})")
-            kill_fn()
-            was_killed = True
+            print(f"closing {display_name} normally for offline apply")
+            graceful_close_fn()
+            was_closed = True
 
     backup = prefs_path.with_suffix(
         prefs_path.suffix + f".bak.{datetime.now():%Y%m%d-%H%M%S}"
@@ -326,9 +307,9 @@ def cmd_apply(
     elif saved_cmdline:
         used = restart_fn(saved_cmdline)
         print(f"restarting {display_name}: {' '.join(used)}")
-    elif was_killed:
+    elif was_closed:
         print(
-            f"{display_name} killed; could not capture original "
+            f"{display_name} closed; could not capture original "
             f"command line -- restart manually."
         )
 
@@ -344,10 +325,9 @@ def cmd_restore(
     *,
     display_name: str,
     running_fn: Callable[[], bool],
-    pids_fn: Callable[[], list[str]],
     find_cmdline_fn: Callable[[], list[str] | None],
-    kill_fn: Callable[[], None],
     restart_fn: Callable[[list[str]], list[str]],
+    graceful_close_fn: Callable[[], None],
 ) -> None:
     """Restore Preferences from a backup created by a prior ``apply``.
 
@@ -402,18 +382,12 @@ def cmd_restore(
         return
 
     saved_cmdline: list[str] | None = None
-    was_killed = False
+    was_closed = False
     if running_fn():
-        if not args.kill_browser:
-            sys.exit(
-                f"error: {display_name} is running. Close it first, "
-                f"or pass --kill-browser"
-            )
         saved_cmdline = find_cmdline_fn()
-        pid_list = pids_fn()
-        print(f"killing {display_name} (pids: {' '.join(pid_list)})")
-        kill_fn()
-        was_killed = True
+        print(f"closing {display_name} normally for restore")
+        graceful_close_fn()
+        was_closed = True
 
     shutil.copy2(backup, prefs_path)
     print(f"restored Preferences from {backup.name}")
@@ -436,9 +410,9 @@ def cmd_restore(
     if saved_cmdline:
         used = restart_fn(saved_cmdline)
         print(f"restarting {display_name}: {' '.join(used)}")
-    elif was_killed:
+    elif was_closed:
         print(
-            f"{display_name} killed; could not capture original "
+            f"{display_name} closed; could not capture original "
             f"command line -- restart manually."
         )
 

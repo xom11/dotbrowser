@@ -33,9 +33,7 @@ from dotbrowser.vivaldi import settings as settings_mod
 from dotbrowser.vivaldi import shortcuts as shortcuts_mod
 from dotbrowser.vivaldi.utils import (  # noqa: F401
     BROWSER_PROCESS,
-    _vivaldi_pids,
     find_main_vivaldi_cmdline,
-    kill_vivaldi_and_wait,
     restart_vivaldi,
     vivaldi_running,
 )
@@ -123,9 +121,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
         args,
         display_name="Vivaldi",
         running_fn=vivaldi_running,
-        pids_fn=_vivaldi_pids,
         find_cmdline_fn=find_main_vivaldi_cmdline,
-        kill_fn=kill_vivaldi_and_wait,
         restart_fn=restart_vivaldi,
         build_plans_fn=_build_plans,
         live_apply_fn=live_mod.apply_live,
@@ -163,10 +159,9 @@ def cmd_restore(args: argparse.Namespace) -> None:
         args,
         display_name="Vivaldi",
         running_fn=vivaldi_running,
-        pids_fn=_vivaldi_pids,
         find_cmdline_fn=find_main_vivaldi_cmdline,
-        kill_fn=kill_vivaldi_and_wait,
         restart_fn=restart_vivaldi,
+        graceful_close_fn=BROWSER_PROCESS.close_and_wait,
     )
 
 

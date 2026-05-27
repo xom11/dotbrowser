@@ -26,10 +26,8 @@ from dotbrowser.chrome import pwa as pwa_mod
 from dotbrowser.chrome import settings as settings_mod
 from dotbrowser.chrome.utils import (  # noqa: F401
     BROWSER_PROCESS,
-    _chrome_pids,
     chrome_running,
     find_main_chrome_cmdline,
-    kill_chrome_and_wait,
     restart_chrome,
 )
 
@@ -102,11 +100,10 @@ def cmd_apply(args: argparse.Namespace) -> None:
         args,
         display_name="Chrome",
         running_fn=chrome_running,
-        pids_fn=_chrome_pids,
         find_cmdline_fn=find_main_chrome_cmdline,
-        kill_fn=kill_chrome_and_wait,
         restart_fn=restart_chrome,
         build_plans_fn=_build_plans,
+        graceful_close_fn=BROWSER_PROCESS.close_and_wait,
     )
 
 
@@ -129,10 +126,9 @@ def cmd_restore(args: argparse.Namespace) -> None:
         args,
         display_name="Chrome",
         running_fn=chrome_running,
-        pids_fn=_chrome_pids,
         find_cmdline_fn=find_main_chrome_cmdline,
-        kill_fn=kill_chrome_and_wait,
         restart_fn=restart_chrome,
+        graceful_close_fn=BROWSER_PROCESS.close_and_wait,
     )
 
 

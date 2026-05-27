@@ -26,10 +26,8 @@ from dotbrowser.edge import pwa as pwa_mod
 from dotbrowser.edge import settings as settings_mod
 from dotbrowser.edge.utils import (  # noqa: F401
     BROWSER_PROCESS,
-    _edge_pids,
     edge_running,
     find_main_edge_cmdline,
-    kill_edge_and_wait,
     restart_edge,
 )
 
@@ -106,11 +104,10 @@ def cmd_apply(args: argparse.Namespace) -> None:
         args,
         display_name="Edge",
         running_fn=edge_running,
-        pids_fn=_edge_pids,
         find_cmdline_fn=find_main_edge_cmdline,
-        kill_fn=kill_edge_and_wait,
         restart_fn=restart_edge,
         build_plans_fn=_build_plans,
+        graceful_close_fn=BROWSER_PROCESS.close_and_wait,
     )
 
 
@@ -133,10 +130,9 @@ def cmd_restore(args: argparse.Namespace) -> None:
         args,
         display_name="Edge",
         running_fn=edge_running,
-        pids_fn=_edge_pids,
         find_cmdline_fn=find_main_edge_cmdline,
-        kill_fn=kill_edge_and_wait,
         restart_fn=restart_edge,
+        graceful_close_fn=BROWSER_PROCESS.close_and_wait,
     )
 
 

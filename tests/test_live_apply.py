@@ -17,8 +17,6 @@ def _args(profile_root: Path, config: Path, **overrides) -> argparse.Namespace:
         "profile": "Default",
         "config": str(config),
         "dry_run": False,
-        "kill_browser": False,
-        "live_port": None,
         "allow_http": False,
         "expect_sha256": None,
     }
@@ -49,62 +47,7 @@ def _build_plan(prefs_path: Path, _prefs: dict, _doc: dict) -> list[Plan]:
     ]
 
 
-def test_running_browser_with_live_port_uses_live_apply_without_writing_preferences(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    profile_root = _profile(tmp_path)
-    cfg = tmp_path / "config.toml"
-    cfg.write_text("[settings]\nfoo.bar = 1\n")
-    prefs_path = profile_root / "Default" / "Preferences"
-    before = prefs_path.read_bytes()
-    calls: list[tuple[int, Path, list[str]]] = []
-    remembered: list[tuple[Path, str, int]] = []
-    monkeypatch.setattr(
-        orch,
-        "remember_devtools_port",
-        lambda root, profile, port: remembered.append((root, profile, port)),
-    )
-
-    def live_apply_fn(port: int, got_prefs_path: Path, _prefs: dict, plans: list[Plan]) -> None:
-        calls.append((port, got_prefs_path, [p.namespace for p in plans]))
-
-    orch.cmd_apply(
-        _args(profile_root, cfg, live_port=9333),
-        display_name="Brave",
-        running_fn=lambda: True,
-        pids_fn=lambda: ["123"],
-        find_cmdline_fn=lambda: ["brave"],
-        kill_fn=lambda: (_ for _ in ()).throw(AssertionError("must not kill")),
-        restart_fn=lambda _cmd: [],
-        build_plans_fn=_build_plan,
-        live_apply_fn=live_apply_fn,
-    )
-
-    assert calls == [(9333, prefs_path, ["settings"])]
-    assert remembered == [(profile_root, "Default", 9333)]
-    assert prefs_path.read_bytes() == before
-
-
-def test_live_port_and_kill_browser_are_mutually_exclusive(tmp_path: Path) -> None:
-    profile_root = _profile(tmp_path)
-    cfg = tmp_path / "config.toml"
-    cfg.write_text("[settings]\nfoo.bar = 1\n")
-
-    with pytest.raises(SystemExit, match="--live-port.*--kill-browser"):
-        orch.cmd_apply(
-            _args(profile_root, cfg, live_port=9333, kill_browser=True),
-            display_name="Brave",
-            running_fn=lambda: False,
-            pids_fn=lambda: [],
-            find_cmdline_fn=lambda: None,
-            kill_fn=lambda: None,
-            restart_fn=lambda _cmd: [],
-            build_plans_fn=_build_plan,
-            live_apply_fn=lambda *_args: None,
-        )
-
-
-def test_running_browser_without_live_port_gracefully_relaunches_for_live_apply(
+def test_running_browser_without_endpoint_gracefully_relaunches_for_live_apply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     profile_root = _profile(tmp_path)
@@ -135,9 +78,7 @@ def test_running_browser_without_live_port_gracefully_relaunches_for_live_apply(
         _args(profile_root, cfg),
         display_name="Brave",
         running_fn=lambda: True,
-        pids_fn=lambda: ["123"],
         find_cmdline_fn=lambda: ["brave"],
-        kill_fn=lambda: (_ for _ in ()).throw(AssertionError("must not force-kill")),
         restart_fn=lambda _cmd: [],
         build_plans_fn=_build_plan,
     live_apply_fn=live_apply_fn,
@@ -170,9 +111,7 @@ def test_running_browser_reuses_existing_devtools_endpoint(
         _args(profile_root, cfg),
         display_name="Brave",
         running_fn=lambda: True,
-        pids_fn=lambda: ["123"],
         find_cmdline_fn=lambda: ["brave"],
-        kill_fn=lambda: (_ for _ in ()).throw(AssertionError("must not force-kill")),
         restart_fn=lambda _cmd: [],
         build_plans_fn=_build_plan,
         live_apply_fn=lambda port, *_args: calls.append(f"live:{port}"),
@@ -213,9 +152,7 @@ def test_plain_live_apply_unsupported_setting_falls_back_without_force_kill(
         _args(profile_root, cfg),
         display_name="Brave",
         running_fn=lambda: True,
-        pids_fn=lambda: ["123"],
         find_cmdline_fn=lambda: ["brave"],
-        kill_fn=lambda: (_ for _ in ()).throw(AssertionError("must not force-kill")),
         restart_fn=lambda _cmd: [],
         build_plans_fn=_build_plan,
         live_apply_fn=unsupported_live_apply,
@@ -234,36 +171,36 @@ def test_plain_live_apply_unsupported_setting_falls_back_without_force_kill(
     ]
 
 
-def test_explicit_live_port_unsupported_setting_does_not_close_or_write(
+def test_running_browser_without_live_adapter_closes_normally_and_restarts(
     tmp_path: Path,
 ) -> None:
     profile_root = _profile(tmp_path)
     cfg = tmp_path / "config.toml"
     cfg.write_text("[settings]\nfoo.bar = 1\n")
     prefs_path = profile_root / "Default" / "Preferences"
-    before = prefs_path.read_bytes()
-    calls: list[str] = []
+    calls: list[tuple[str, object]] = []
 
-    def unsupported_live_apply(*_args: object) -> None:
-        raise live_apply.LiveApplyUnsupported("Brave", ["foo.bar"])
+    orch.cmd_apply(
+        _args(profile_root, cfg),
+        display_name="Chrome",
+        running_fn=lambda: True,
+        find_cmdline_fn=lambda: ["chrome"],
+        restart_fn=lambda cmd: calls.append(("restart", cmd)) or cmd,
+        build_plans_fn=_build_plan,
+        graceful_close_fn=lambda: calls.append(("close", None)),
+    )
 
-    with pytest.raises(SystemExit, match="foo.bar"):
-        orch.cmd_apply(
-            _args(profile_root, cfg, live_port=9333),
-            display_name="Brave",
-            running_fn=lambda: True,
-            pids_fn=lambda: ["123"],
-            find_cmdline_fn=lambda: ["brave"],
-            kill_fn=lambda: calls.append("kill"),
-            restart_fn=lambda _cmd: [],
-            build_plans_fn=_build_plan,
-            live_apply_fn=unsupported_live_apply,
-            graceful_close_fn=lambda: calls.append("close"),
-            launch_live_fn=lambda *_args: calls.append("launch") or ["brave"],
+    assert json.loads(prefs_path.read_text()) == {"foo": {"bar": 1}}
+    assert calls == [("close", None), ("restart", ["chrome"])]
+
+
+def test_live_setting_removal_signals_offline_fallback() -> None:
+    with pytest.raises(live_apply.LiveApplyUnsupported) as exc:
+        live_apply.refuse_live_removals(
+            "Chrome", [(("foo", "bar"), live_apply.MISSING)]
         )
 
-    assert calls == []
-    assert prefs_path.read_bytes() == before
+    assert exc.value.keys == ["foo.bar"]
 
 
 def test_changed_leaf_paths_expands_new_nested_dicts() -> None:

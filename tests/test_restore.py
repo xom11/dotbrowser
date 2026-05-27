@@ -29,7 +29,6 @@ def _restore(
     from_path: str | None = None,
     list_only: bool = False,
     dry_run: bool = False,
-    kill_browser: bool = False,
 ) -> None:
     args = argparse.Namespace(
         profile_root=profile_root,
@@ -37,7 +36,6 @@ def _restore(
         from_path=from_path,
         list=list_only,
         dry_run=dry_run,
-        kill_browser=kill_browser,
     )
     brave_pkg.cmd_restore(args)
 
@@ -166,13 +164,25 @@ def test_restore_dry_run_does_not_write(
     ).read_bytes() == sidecar_before
 
 
-def test_restore_refuses_when_running_without_kill(
+def test_restore_running_browser_closes_normally_and_restarts(
     profile_with_backups: tuple[Path, list[Path]], monkeypatch
 ) -> None:
+    calls: list[object] = []
     monkeypatch.setattr(brave_pkg, "brave_running", lambda: True)
+    monkeypatch.setattr(
+        brave_pkg.BROWSER_PROCESS, "close_and_wait", lambda: calls.append("close")
+    )
+    monkeypatch.setattr(brave_pkg, "find_main_brave_cmdline", lambda: ["brave"])
+    monkeypatch.setattr(
+        brave_pkg,
+        "restart_brave",
+        lambda cmd: calls.append(("restart", cmd)) or cmd,
+    )
     profile_root, _ = profile_with_backups
-    with pytest.raises(SystemExit, match="--kill-browser"):
-        _restore(profile_root)
+
+    _restore(profile_root)
+
+    assert calls == ["close", ("restart", ["brave"])]
 
 
 def test_list_lists_backups_newest_first(
@@ -202,13 +212,14 @@ def test_list_with_no_backups_does_not_crash(
 
 def test_cli_restore_help_lists_flags() -> None:
     """Smoke test the argparse wiring -- restore must appear in `--help`
-    with --from / --list / --dry-run / --kill-browser."""
+    with --from / --list / --dry-run but no removed force-kill switch."""
     profile = REPO_ROOT  # arbitrary path; --help short-circuits
     r = _run_cli(profile, "restore", "--help")
     assert r.returncode == 0
     out = r.stdout
-    for flag in ("--from", "--list", "--dry-run", "--kill-browser"):
+    for flag in ("--from", "--list", "--dry-run"):
         assert flag in out
+    assert "--kill-browser" not in out
 
 
 def test_cli_edge_has_restore() -> None:

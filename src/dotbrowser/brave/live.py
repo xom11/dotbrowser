@@ -40,7 +40,7 @@ def _page_target(client: CdpClient) -> dict:
     for target in client.list_targets():
         if target.get("type") == "page":
             return target
-    sys.exit("error: --live-port found no page target to drive Brave live apply")
+    sys.exit("error: live apply found no page target to drive Brave")
 
 
 def _is_shortcut_path(parts: tuple[str, ...]) -> bool:

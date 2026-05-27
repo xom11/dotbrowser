@@ -36,7 +36,7 @@ def _vivaldi_target(client: CdpClient) -> dict:
                 return target
         except SystemExit:
             continue
-    sys.exit("error: --live-port found no Vivaldi UI target to drive live apply")
+    sys.exit("error: live apply found no Vivaldi UI target to drive settings")
 
 
 def _value_for_api(path: str, value: Any) -> Any:

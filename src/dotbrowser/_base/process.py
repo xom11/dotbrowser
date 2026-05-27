@@ -241,8 +241,7 @@ class BrowserProcess:
             time.sleep(0.1)
         sys.exit(
             f"error: {self.display_name} is still running after a normal "
-            f"close request. Close it manually, or pass --kill-browser to "
-            f"force the old apply path."
+            "close request. Close it manually and retry."
         )
 
     def _is_flatpak_cmdline(self, captured_cmdline: list[str]) -> bool:

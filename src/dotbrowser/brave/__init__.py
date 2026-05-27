@@ -33,10 +33,8 @@ from dotbrowser.brave import settings as settings_mod
 from dotbrowser.brave import shortcuts as shortcuts_mod
 from dotbrowser.brave.utils import (  # noqa: F401
     BROWSER_PROCESS,
-    _brave_pids,
     brave_running,
     find_main_brave_cmdline,
-    kill_brave_and_wait,
     restart_brave,
 )
 
@@ -234,9 +232,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
             args,
             display_name="Brave",
             running_fn=brave_running,
-            pids_fn=_brave_pids,
             find_cmdline_fn=find_main_brave_cmdline,
-            kill_fn=kill_brave_and_wait,
             restart_fn=restart_brave,
             build_plans_fn=_build_plans,
             live_apply_fn=live_mod.apply_live,
@@ -251,9 +247,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
         args,
         display_name=proc.display_name,
         running_fn=proc.running,
-        pids_fn=proc.pids,
         find_cmdline_fn=proc.find_main_cmdline,
-        kill_fn=proc.kill_and_wait,
         restart_fn=proc.restart,
         build_plans_fn=_build_plans,
         live_apply_fn=live_mod.apply_live,
@@ -299,10 +293,9 @@ def cmd_restore(args: argparse.Namespace) -> None:
             args,
             display_name="Brave",
             running_fn=brave_running,
-            pids_fn=_brave_pids,
             find_cmdline_fn=find_main_brave_cmdline,
-            kill_fn=kill_brave_and_wait,
             restart_fn=restart_brave,
+            graceful_close_fn=BROWSER_PROCESS.close_and_wait,
         )
         return
 
@@ -312,10 +305,9 @@ def cmd_restore(args: argparse.Namespace) -> None:
         args,
         display_name=proc.display_name,
         running_fn=proc.running,
-        pids_fn=proc.pids,
         find_cmdline_fn=proc.find_main_cmdline,
-        kill_fn=proc.kill_and_wait,
         restart_fn=proc.restart,
+        graceful_close_fn=proc.close_and_wait,
     )
 
 
