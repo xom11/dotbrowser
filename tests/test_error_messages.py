@@ -69,7 +69,6 @@ def _make_args(profile_root: Path, config: Path) -> argparse.Namespace:
         profile="Default",
         config=str(config),
         dry_run=False,
-        kill_browser=False,
         allow_http=False,
         expect_sha256=None,
     )
@@ -104,9 +103,7 @@ def test_sudo_preflight_handles_missing_sudo(
             _make_args(tmp_path, cfg),
             display_name="Brave",
             running_fn=lambda: False,
-            pids_fn=lambda: [],
             find_cmdline_fn=lambda: None,
-            kill_fn=lambda: None,
             restart_fn=lambda _cmd: [],
             build_plans_fn=_build_pwa_only_plans,
         )
@@ -143,9 +140,7 @@ def test_sudo_preflight_handles_calledprocesserror(
             _make_args(tmp_path, cfg),
             display_name="Brave",
             running_fn=lambda: False,
-            pids_fn=lambda: [],
             find_cmdline_fn=lambda: None,
-            kill_fn=lambda: None,
             restart_fn=lambda _cmd: [],
             build_plans_fn=_build_pwa_only_plans,
         )

@@ -32,8 +32,8 @@ Command shape:
   dotbrowser <browser> [browser-options] <action> [action-options]
 
 Capability overview:
-  Brave          [shortcuts] [settings] [pwa]  live apply; stable/beta/nightly
-  Vivaldi        [shortcuts] [settings] [pwa]  live apply; settings schema search
+  Brave          [shortcuts] [settings] [pwa]  automatic live/fallback apply
+  Vivaldi        [shortcuts] [settings] [pwa]  automatic live/fallback apply
   Microsoft Edge [settings] [pwa]              automatic live/fallback apply
   Google Chrome  [settings] [pwa]              automatic live/fallback apply
 

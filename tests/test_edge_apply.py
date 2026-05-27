@@ -41,7 +41,6 @@ def _apply(profile_root: Path, config: Path, monkeypatch) -> None:
         profile="Default",
         config=str(config),
         dry_run=False,
-        kill_browser=False,
     )
     edge_pkg.cmd_apply(args)
 
@@ -99,7 +98,6 @@ def test_dry_run_does_not_write(
         profile="Default",
         config=str(cfg),
         dry_run=True,
-        kill_browser=False,
     )
     edge_pkg.cmd_apply(args)
 
@@ -120,7 +118,6 @@ def test_empty_config_errors(fake_edge_profile: Path, tmp_path: Path, monkeypatc
         profile="Default",
         config=str(cfg),
         dry_run=False,
-        kill_browser=False,
     )
     with pytest.raises(SystemExit, match="nothing to apply"):
         edge_pkg.cmd_apply(args)

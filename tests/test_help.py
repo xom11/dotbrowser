@@ -37,6 +37,7 @@ def test_root_help_explains_capabilities_and_workflow() -> None:
     assert "Capability overview" in out
     assert "Brave" in out and "[shortcuts] [settings] [pwa]" in out
     assert "Edge" in out and "[settings] [pwa]" in out
+    assert out.count("automatic live/fallback apply") == 4
     assert "Typical workflow" in out
     assert "apply --dry-run" in out
     assert "restore" in out

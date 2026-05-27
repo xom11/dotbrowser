@@ -59,7 +59,6 @@ def _apply(profile_root: Path, config: Path) -> None:
         profile="Default",
         config=config,
         dry_run=False,
-        kill_browser=False,
     )
     vivaldi_pkg.cmd_apply(args)
 

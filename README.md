@@ -96,8 +96,8 @@ urls = [
 dotbrowser brave   apply brave.toml --dry-run    # preview the diff
 dotbrowser brave   apply brave.toml              # live apply if Brave is running
 dotbrowser vivaldi apply vivaldi.toml            # live apply if Vivaldi is running
-dotbrowser edge    apply edge.toml               # close Edge first, or add -k
-dotbrowser chrome  apply chrome.toml             # close Chrome first, or add -k
+dotbrowser edge    apply edge.toml               # live apply with automatic fallback
+dotbrowser chrome  apply chrome.toml             # live apply with automatic fallback
 ```
 
 - **Shortcut keys (Brave)**: Chromium [KeyEvent codes](https://www.w3.org/TR/uievents-code/) joined by `+` — `Control+Shift+KeyP`, `Alt+Digit1`, `F11`. `Meta+` is auto-translated to `Command+` on macOS.
@@ -155,47 +155,26 @@ dotbrowser chrome  init -o chrome.toml
 
 ### `apply <config>` — write `[shortcuts]` + `[settings]` + `[pwa]`
 
-`<config>` is a local TOML file path **or** an `http://`/`https://` URL. URLs are fetched in-memory; the URL, byte size, and SHA-256 are printed before the diff so you can verify exactly what's about to be applied. If the config contains a non-empty `[pwa]` table, dotbrowser runs a privilege preflight (sudo on Linux/macOS, admin check on Windows) *before* closing, relaunching, or killing the browser, so an auth failure cannot strand the user with a dead browser.
+`<config>` is a local TOML file path **or** an `http://`/`https://` URL. URLs are fetched in-memory; the URL, byte size, and SHA-256 are printed before the diff so you can verify exactly what's about to be applied. If the config contains a non-empty `[pwa]` table, dotbrowser runs a privilege preflight (sudo on Linux/macOS, admin check on Windows) *before* closing or relaunching the browser, so an auth failure cannot interrupt the current session.
 
 | Flag | What it does |
 |---|---|
 | `-n, --dry-run` | Compute + print the diff. Do not back up, write, or touch state files. |
-| `-k, --kill-browser` | Force the old offline path: if the browser is running, force-kill it, patch `Preferences`, then restart. Normally you should not need this for Brave/Vivaldi. |
-| `--live-port PORT` | Advanced/debug: use an already-running Brave/Vivaldi DevTools endpoint on `127.0.0.1:PORT` instead of auto-detecting or auto-relaunching one. Mutually exclusive with `-k`. |
 
 ```bash
 dotbrowser brave   apply brave.toml --dry-run
 dotbrowser brave   apply brave.toml
 dotbrowser vivaldi apply vivaldi.toml
-dotbrowser edge    apply edge.toml -k
-dotbrowser chrome  apply chrome.toml -k
-dotbrowser brave   apply -k https://raw.githubusercontent.com/xom11/dotbrowser/main/examples/brave/all.toml
+dotbrowser edge    apply edge.toml
+dotbrowser chrome  apply chrome.toml
 ```
 
-For Brave and Vivaldi, plain `apply` is the normal no-force-kill path.
-If the browser is already running with dotbrowser's live endpoint,
-dotbrowser uses it. If the browser is running normally, dotbrowser first
-asks it to close normally, relaunches it once with a local live endpoint,
-remembers that endpoint in `.dotbrowser.live.json`, then applies through
-the running browser APIs. It does not use
-`taskkill /F`, `pkill -KILL`, or the `--kill-browser` path unless you
-explicitly pass `-k`.
-
-### `launch --live-port PORT [url]` — advanced live endpoint helper
-
-You do not need this for normal use. `launch` is kept for debugging and
-manual workflows where you want to start Brave/Vivaldi with a known live
-port before running `apply`.
-
-```bash
-dotbrowser brave   launch --live-port 9333
-dotbrowser vivaldi launch --live-port 9334 https://example.com/
-dotbrowser brave   apply brave.toml --live-port 9333
-```
-
-Treat a live port as local automation access to your browser. Use a
-high, private port, bind only to `127.0.0.1` (dotbrowser does this), and
-close the browser when you no longer need live apply.
+For every browser, plain `apply` automatically attempts a live update when
+the browser is running. dotbrowser privately creates or reuses a loopback
+DevTools endpoint when needed. Settings exposed by the browser UI apply in
+the existing process; unsupported settings and resets trigger a normal
+close, verified offline apply, and relaunch. There is no force-kill workflow
+or manual endpoint option.
 
 ### `shortcuts dump` — emit current shortcuts as TOML (Brave + Vivaldi)
 
@@ -298,33 +277,24 @@ dotbrowser chrome  export -o chrome.toml        # [pwa] only
 When the target browser is closed, `dotbrowser` patches the profile
 `Preferences` JSON directly. Each offline apply takes one timestamped
 backup, writes atomically (temp file + rename), and verifies the result
-by reloading. Edge and Chrome still use this offline path; if they are
-running, close them first or pass `-k`.
+by reloading. Edge and Chrome also use this path whenever a requested
+setting is not exposed through their running Settings UI.
 
-For Brave and Vivaldi, plain `apply` uses the browser's own privileged
-UI APIs whenever the browser is running: ordinary Brave settings go
-through `chrome.settingsPrivate`, Brave New Tab settings such as
-`ntp.shortcust_visible` go through the live New Tab UI actions, Brave
-shortcuts go through its Settings `CommandsService`, and Vivaldi
+Plain `apply` uses each browser's privileged UI APIs whenever possible:
+ordinary Brave, Chrome, and Edge settings go through
+`chrome.settingsPrivate`; Brave New Tab settings such as
+`ntp.shortcust_visible` go through live New Tab UI actions; Brave
+shortcuts go through its Settings `CommandsService`; and Vivaldi
 settings/shortcuts go through `vivaldi.prefs`. Vivaldi shortcut changes
-reload the internal Vivaldi UI page so the new accelerators are
-registered. If the browser already has a live endpoint, supported
-changes take effect with existing windows still open. If it was not
-already launched with an endpoint, dotbrowser asks it to close normally
-and relaunches it once because Chromium cannot add DevTools flags to an
-existing process.
-
-If plain Brave `apply` sees a changed setting that its running UI cannot
-apply live, it closes Brave normally, performs the verified offline
-apply, and relaunches it with a live endpoint. This fallback does not
-force-kill the browser and does not require `--kill-browser`. An
-explicit `--live-port` instead reports unsupported keys without closing
-that browser process.
+reload the internal Vivaldi UI page so new accelerators are registered.
+Supported changes take effect with the current process open. A browser not
+yet carrying dotbrowser's internal endpoint closes normally and relaunches
+once; a setting without a live route uses the same normal-close fallback
+for a verified offline write.
 Live apply writes `.dotbrowser.live.json` so later `apply` runs can find
 the endpoint, and it still writes namespace sidecar files so the next
-apply knows what it manages. Removing/resetting `[settings]` keys is not
-live-resettable yet; close the browser and use offline apply or `-k` for
-that case.
+apply knows what it manages. Removing/resetting `[settings]` keys is handled
+through automatic normal-close offline fallback.
 
 `[shortcuts]` and `[settings]` track managed entries per namespace in sidecar files (`Preferences.dotbrowser.{shortcuts,settings}.json`), so removing a key from your config restores the browser's default on the next offline `apply`. `[pwa]` is different: its state lives in Chromium's managed-policy storage (Linux JSON file, macOS plist, Windows Registry) — the policy *is* the state, no sidecar. Chromium marks the PWA force-install policy as dynamically refreshable, but Windows still requires Administrator to write `HKLM`. Removing a URL from `[pwa]` and re-applying triggers an uninstall through the same policy mechanism.
 
@@ -334,16 +304,16 @@ All Chromium-based browsers share `src/dotbrowser/_base/`: orchestrator, setting
 
 ### Brave install methods
 
-| Install | Auto-detected | `-k` works | `[pwa]` works | Notes |
+| Install | Auto-detected | Automatic apply | `[pwa]` works | Notes |
 |---|---|---|---|---|
 | `.deb` (Debian / Ubuntu apt repo) | yes | yes | yes | Reference install; full support. |
 | `.rpm` (Fedora / RHEL dnf repo) | yes | yes | yes | Same paths as `.deb` (Chromium upstream convention). |
 | Arch / `pacman` | yes | yes | yes | Same. |
 | NixOS (`pkgs.brave`) | yes | yes | yes | Same. |
 | **Snap** (`sudo snap install brave`) | yes (probes `~/snap/brave/current/.config/...`) | yes | **refused with clear error** — sandbox doesn't read `/etc/brave/policies/managed/` | Use `.deb` for `[pwa]` support. |
-| **Flatpak** (`flathub com.brave.Browser`) | yes (probes `~/.var/app/com.brave.Browser/config/...`) | yes — the inner brave binary is still named `brave` so `pgrep -x` matches; restart goes back through `flatpak run com.brave.Browser` | **refused with clear error** — same sandbox limitation as Snap | Use `.deb` for `[pwa]` support. |
+| **Flatpak** (`flathub com.brave.Browser`) | yes (probes `~/.var/app/com.brave.Browser/config/...`) | yes; relaunch goes back through `flatpak run com.brave.Browser` | **refused with clear error** — same sandbox limitation as Snap | Use `.deb` for `[pwa]` support. |
 | **macOS** `.dmg` | yes | yes | yes | Includes the cfprefsd cache invalidation needed for `[pwa]`. |
-| **Windows** installer | yes (auto-detects `%LOCALAPPDATA%`) | yes — uses `taskkill` / `tasklist`; restarts via the standard `brave.exe` path | yes — writes to Windows Registry (`HKLM\...\WebAppInstallForceList`); requires running as Administrator | |
+| **Windows** installer | yes (auto-detects `%LOCALAPPDATA%`) | yes; relaunches via the standard `brave.exe` path | yes — writes to Windows Registry (`HKLM\...\WebAppInstallForceList`); requires running as Administrator | |
 
 Dual-install machines (e.g. `.deb` + Snap installed side-by-side) prefer the direct-install profile, matching what `which brave-browser` resolves to.
 

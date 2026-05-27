@@ -50,13 +50,12 @@ def _prefs(profile_root: Path) -> dict:
     return json.loads((profile_root / "Default" / "Preferences").read_text())
 
 
-def _apply(profile_root: Path, config: Path, *, kill_browser: bool = False) -> None:
+def _apply(profile_root: Path, config: Path) -> None:
     args = argparse.Namespace(
         profile_root=profile_root,
         profile="Default",
         config=config,
         dry_run=False,
-        kill_browser=kill_browser,
     )
     brave_pkg.cmd_apply(args)
 

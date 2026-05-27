@@ -41,7 +41,6 @@ def _apply(profile_root: Path, config: Path, monkeypatch) -> None:
         profile="Default",
         config=str(config),
         dry_run=False,
-        kill_browser=False,
     )
     chrome_pkg.cmd_apply(args)
 
@@ -180,7 +179,6 @@ def test_dry_run_does_not_write(
         profile="Default",
         config=str(cfg),
         dry_run=True,
-        kill_browser=False,
     )
     chrome_pkg.cmd_apply(args)
 
@@ -201,7 +199,6 @@ def test_empty_config_errors(fake_chrome_profile: Path, tmp_path: Path, monkeypa
         profile="Default",
         config=str(cfg),
         dry_run=False,
-        kill_browser=False,
     )
     with pytest.raises(SystemExit, match="nothing to apply"):
         chrome_pkg.cmd_apply(args)

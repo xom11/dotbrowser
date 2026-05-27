@@ -414,7 +414,6 @@ def test_cli_apply_coerces_and_writes_int(
         profile="Default",
         config=cfg,
         dry_run=False,
-        kill_browser=False,
         expect_sha256=None,
         allow_http=False,
     )

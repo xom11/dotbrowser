@@ -11,10 +11,10 @@ It is a Python 3.11+ stdlib-only CLI package.
 
 | Browser | Managed TOML tables | Apply mode |
 |---|---|---|
-| Brave | `[shortcuts]`, `[settings]`, `[pwa]` | offline or live; stable/beta/nightly |
-| Vivaldi | `[shortcuts]`, `[settings]`, `[pwa]` | offline or live; schema-aware settings |
-| Edge | `[settings]`, `[pwa]` | offline only |
-| Chrome | `[settings]`, `[pwa]` | offline only |
+| Brave | `[shortcuts]`, `[settings]`, `[pwa]` | automatic live/fallback; stable/beta/nightly |
+| Vivaldi | `[shortcuts]`, `[settings]`, `[pwa]` | automatic live/fallback; schema-aware settings |
+| Edge | `[settings]`, `[pwa]` | automatic live/fallback |
+| Chrome | `[settings]`, `[pwa]` | automatic live/fallback |
 
 Edge and Chrome do not expose a supported keyboard-shortcut preference
 surface. Do not advertise or implement `[shortcuts]` for them without a
@@ -40,7 +40,7 @@ Useful targeted suites:
 ```bash
 pytest tests/test_help.py tests/test_smoke.py
 pytest tests/test_unified_apply.py tests/test_settings_apply.py tests/test_pwa_apply.py
-pytest tests/test_live_apply.py tests/test_brave_live.py tests/test_vivaldi_live.py
+pytest tests/test_live_apply.py tests/test_brave_live.py tests/test_vivaldi_live.py tests/test_chromium_live.py
 pytest tests/test_edge_apply.py tests/test_chrome_apply.py tests/test_export.py
 pytest tests/test_vivaldi_apply.py tests/test_vivaldi_schema.py
 ```
@@ -49,15 +49,15 @@ pytest tests/test_vivaldi_apply.py tests/test_vivaldi_schema.py
 
 - `src/dotbrowser/cli.py`: root parser and browser registration.
 - `src/dotbrowser/_base/orchestrator.py`: config loading, unified
-  `apply`/`init`/`export`/`restore`/`launch`, and shared argparse wiring.
+  `apply`/`init`/`export`/`restore`, and shared argparse wiring.
 - `src/dotbrowser/_base/utils.py`: `Plan`, Preferences loading, atomic write.
 - `src/dotbrowser/_base/settings.py`: dotted-key settings and MAC refusal.
 - `src/dotbrowser/_base/pwa.py`: policy validation, read/write, and diff logic.
-- `src/dotbrowser/_base/process.py`, `cdp.py`, `live_apply.py`: browser
-  lifecycle and live-apply infrastructure.
+- `src/dotbrowser/_base/process.py`, `cdp.py`, `live_apply.py`, and
+  `chromium_live.py`: browser lifecycle and live-apply infrastructure.
 - `src/dotbrowser/{brave,vivaldi,edge,chrome}/`: browser capability and
-  platform adapters. Brave/Vivaldi contain shortcut-specific logic;
-  Brave/Vivaldi also wire live adapters.
+  platform adapters. Brave/Vivaldi contain shortcut-specific logic; all
+  four browser packages wire live adapters.
 - `examples/<browser>/`: valid user-facing config samples.
 - `tests/`: behavior contracts. Add or update tests alongside behavior or
   CLI-help changes.
@@ -77,17 +77,19 @@ Preserve these contracts unless a change explicitly redesigns them:
 4. `[pwa]` is external managed policy storage. It requires sudo on
    Linux/macOS or Administrator on Windows when changed, writes before the
    Preferences commit, and has no Preferences sidecar.
-5. Live apply exists only for Brave and Vivaldi. Endpoints bind to
-   `127.0.0.1`; `--kill-browser` forces the offline path. Live removal/reset
-   of settings is not supported yet.
+5. Plain `apply` manages live apply for all four browsers. Endpoints bind to
+   `127.0.0.1` and remain internal; no public endpoint or force-kill switch
+   is exposed. Unsupported live settings and removals fall back to a normal
+   close, verified offline apply, and relaunch.
 6. `export` intentionally omits `[settings]`. Brave exports shortcut diffs
    against stored defaults; Vivaldi exports non-empty bindings because it
    has no defaults mirror; Edge/Chrome export `[pwa]` only.
 7. `restore` restores Preferences backups and clears shortcut/settings
-   sidecars. It does not roll back external `[pwa]` policy.
+   sidecars. If a browser is running, it closes normally and restarts; it
+   does not roll back external `[pwa]` policy.
 8. Runtime help is part of the capability contract. Shared parser wording
-   must remain truthful for each browser; do not expose options such as live
-   apply where no implementation exists.
+   must remain truthful for each browser; do not reintroduce manual
+   endpoint-selection or force-kill controls.
 
 ## Browser-Specific Notes
 
@@ -95,7 +97,7 @@ Preserve these contracts unless a change explicitly redesigns them:
   `Command+` are normalized per platform before persistence.
 - Brave `--channel` changes both profile discovery and process handling.
   Non-stable Linux channels require PID filtering so applying Beta/Nightly
-  does not kill another Brave channel.
+  does not close another Brave channel.
 - Vivaldi shortcut keys are `COMMAND_*` names stored under
   `vivaldi.actions`; original bindings are recorded for restore-on-removal.
 - Vivaldi may read its installed `prefs_definitions.json` for shortcut
@@ -110,8 +112,9 @@ Preserve these contracts unless a change explicitly redesigns them:
   action options, and implementation agree.
 - For a new Chromium browser, provide profile/process configuration,
   thin settings and PWA wrappers, browser registration, examples, apply
-  tests, export coverage, and help coverage. Add shortcuts or live apply
-  only when the browser exposes a tested API.
+  tests, export coverage, and help coverage. Add shortcuts only with a
+  verified persistence mechanism; add live routes only with a tested API and
+  retain normal-close fallback for unsupported settings.
 - Preserve testability: policy paths, privilege writers, and process
   callbacks are intentionally patchable in tests.
 
