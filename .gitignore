@@ -15,6 +15,7 @@ venv/
 htmlcov/
 .coverage
 *.bak.*
+.worktrees/
 
 # nix
 result
